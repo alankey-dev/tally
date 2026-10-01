@@ -3,6 +3,8 @@
 {% block title %}{{project['title']}} · Tally{% endblock %}
 {% block body_attrs %} data-live="true"{% endblock %}
 {% block content %}
+{% set keep_count = ('<input type="hidden" name="quantity" value="%d">' % wanted)|safe if wanted > 1 else '' %}
+{% set short_lines = plan|selectattr('short', 'gt', 0)|list %}
 <a class="back" href="{{url_for('projects')}}">{{ icon('back', 'small') }}Projects</a>
 <section class="page-head detail-head">
   <div>
@@ -26,9 +28,10 @@
   <span class="badge neutral">{{plan|length}} {{'line' if plan|length == 1 else 'lines'}}</span>
 </div>
 <form class="build-form" method="post" action="{{url_for('build_project', project_id=project['id'])}}" data-build-planner>
-  <label class="inline-qty">Build<input name="quantity" type="number" min="1" step="1" value="{{wanted}}" required aria-label="Number of builds"></label>
+  <label class="inline-qty">Build<input name="quantity" type="number" min="1" max="{{max_builds}}" step="1" value="{{wanted}}" required autocomplete="off" aria-label="Number of builds"></label>
   <button class="button" formmethod="get" formaction="{{url_for('project_detail', project_id=project['id'])}}" formnovalidate>Check stock</button>
-  <button class="button primary"{% if not plan %} disabled{% endif %}>{{ icon('swap') }}Build <span data-build-count>×{{wanted}}</span></button>
+  <button class="button primary"{% if not plan or short_lines %} disabled{% endif %}>{{ icon('swap') }}Build <span data-build-count>×{{wanted}}</span></button>
+  {% if short_lines and buildable %}<small>Stock covers <a href="{{url_for('project_detail', project_id=project['id'], quantity=buildable if buildable > 1 else None)}}">×{{buildable}}</a>.</small>{% endif %}
 </form>
 <div class="table-wrap">
   <table>
@@ -37,12 +40,12 @@
       {% for line in plan %}
       <tr data-line data-per-build="{{line['per_build']}}" data-on-hand="{{line['on_hand']}}" data-unit="{{line['unit']}}">
         <td data-label="Component"><a href="{{url_for('item_detail', item_id=line['id'])}}">{{line['name']}}</a><br><small><code>{{line['code']}}</code> · {{line['part_number'] or 'No part number'}}</small></td>
-        <td data-label="Per build" class="num"><form class="inline-qty" method="post" action="{{url_for('update_project_line', project_id=project['id'], item_id=line['id'])}}"><input name="per_build" type="number" min="0.001" step="any" value="{{line['per_build']|qty}}" aria-label="Quantity of {{line['name']}} per build"><button class="button small">Save</button></form></td>
+        <td data-label="Per build" class="num"><form class="inline-qty" method="post" action="{{url_for('update_project_line', project_id=project['id'], item_id=line['id'])}}">{{keep_count}}<input name="per_build" type="number" min="0.001" step="any" value="{{line['per_build']|qty}}" aria-label="Quantity of {{line['name']}} per build"><button class="button small">Save</button></form></td>
         <td data-label="Need" class="num" data-need>{{line['need']|qty}} {{line['unit']}}</td>
         <td data-label="On hand" class="num">{{line['on_hand']|qty}} {{line['unit']}}</td>
         <td data-label="Status" data-status>{% if line['short'] > 0 %}<span class="badge danger">Short {{line['short']|qty}}</span>{% else %}<span class="badge neutral">Covered</span>{% endif %}</td>
         <td data-label="Consumed" class="num">{{line['consumed']|qty}}</td>
-        <td class="actions"><form method="post" action="{{url_for('delete_project_line', project_id=project['id'], item_id=line['id'])}}"><button class="button small quiet danger">Remove</button></form></td>
+        <td class="actions"><form method="post" action="{{url_for('delete_project_line', project_id=project['id'], item_id=line['id'])}}">{{keep_count}}<button class="button small quiet danger">Remove</button></form></td>
       </tr>
       {% else %}
       <tr><td colspan="7"><div class="empty">No lines yet. Search on the right to add what one build needs.</div></td></tr>
@@ -56,7 +59,7 @@
     <h2>Add a line</h2>
     <p class="copy card-intro">Say how many one build needs. Stock is only taken when you build.</p>
     <form method="get" class="project-search" role="search">
-      {% if wanted > 1 %}<input type="hidden" name="quantity" value="{{wanted}}">{% endif %}
+      {{keep_count}}
       <input name="q" value="{{query}}" placeholder="Search components" aria-label="Search components">
       <button>Find</button>
     </form>
@@ -64,6 +67,7 @@
     <div class="project-search-results">
       {% for component in components %}
       <form method="post">
+        {{keep_count}}
         <input type="hidden" name="item_id" value="{{component['id']}}">
         <strong>{{component['name']}}</strong>
         <small>{{component['quantity']|qty}} {{component['unit']}} on hand · <code>{{component['code']}}</code></small>
@@ -88,7 +92,7 @@
         {% if build['undone_at'] %}
         <span class="badge neutral">Undone {{build['undone_at'][:10]}}</span>
         {% else %}
-        <form method="post" action="{{url_for('undo_build', project_id=project['id'], build_id=build['id'])}}"><button class="button small quiet">Undo</button></form>
+        <form method="post" action="{{url_for('undo_build', project_id=project['id'], build_id=build['id'])}}">{{keep_count}}<button class="button small quiet">Undo</button></form>
         {% endif %}
       </div>
       {% else %}
