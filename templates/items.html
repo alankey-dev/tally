@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import qty, stock_state, icon %}
+{% block body_attrs %} data-live="true"{% endblock %}
+{% block title %}Components · Tally{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Components</h1>
+  </div>
+  <div class="page-actions">
+    <a class="button" href="{{url_for('quick_add')}}">{{ icon('zap') }}Quick add</a>
+    <a class="button primary" href="{{url_for('new_item')}}">{{ icon('plus') }}Add component</a>
+  </div>
+</section>
+
+<div class="toolbar">
+  <form class="search" autocomplete="off" aria-label="Search components" role="search">
+    <div class="search-field">
+      {{ icon('search') }}
+      <input id="inventory-search" name="q" value="{{query}}" placeholder="Search by name, part number, or location">
+      <div id="search-suggestions" class="suggestions" hidden></div>
+    </div>
+    <input type="hidden" name="view" value="{{view}}">
+    <button>Search</button>
+  </form>
+  <div class="segmented" aria-label="Component display">
+    <a href="{{url_for('items', q=query, view='tiles')}}"{% if view == 'tiles' %} aria-current="true"{% endif %}>Tiles</a>
+    <a href="{{url_for('items', q=query, view='list')}}"{% if view == 'list' %} aria-current="true"{% endif %}>List</a>
+  </div>
+</div>
+
+{% if view == 'tiles' %}
+<section class="component-grid">
+  {% for item in items %}
+  <article class="component-card">
+    {% if images_enabled %}
+    <button class="component-image" type="button" data-image-open data-image-src="{{url_for('uploaded_image', filename=item['image_path']) if item['image_path'] else ''}}" data-image-label="{{item['name']}}"{% if not item['image_path'] %} disabled{% endif %}>
+      {% if item['image_path'] %}<img src="{{url_for('uploaded_image', filename=item['image_path'])}}" alt="{{item['name']}}">{% else %}{{ icon('image') }}<small>No image</small>{% endif %}
+    </button>
+    {% endif %}
+    <div class="component-card-body">
+      <a href="{{url_for('item_detail', item_id=item['id'])}}" class="component-title">{{item['name']}}</a>
+      <p>{{item['part_number'] or item['manufacturer'] or 'No part number'}}</p>
+      <div class="component-meta">
+        <code>{{item['code']}}</code>
+        {{ qty(item) }}
+      </div>
+    </div>
+  </article>
+  {% else %}
+  <div class="empty">No components found. <a href="{{url_for('new_item')}}">Add your first component.</a></div>
+  {% endfor %}
+</section>
+{% else %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Part number</th><th>Location</th><th class="num">On hand</th><th class="num">Minimum</th><th><span class="visually-hidden">Actions</span></th></tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td data-label="Component"><a href="{{url_for('item_detail', item_id=item['id'])}}">{{item['name']}}</a>{% if item['manufacturer'] %}<small>{{item['manufacturer']}}</small>{% endif %}</td>
+        <td data-label="Part number">{{item['part_number'] or 'Not set'}}</td>
+        <td data-label="Location"><code>{{item['code']}}</code><small>{{item['location_label']}}</small></td>
+        <td data-label="On hand" class="num">{{ qty(item) }}</td>
+        <td data-label="Minimum" class="num">{% if item['minimum_quantity'] is not none %}{{item['minimum_quantity']|qty}}{% if stock_state(item) %} <span class="badge warn">Low</span>{% endif %}{% else %}<span class="copy">Not set</span>{% endif %}</td>
+        <td data-label="Actions" class="actions"><a class="button small" href="{{url_for('stock', add=item['id'])}}">Stock</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6"><div class="empty">No matching components.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<dialog id="component-image-dialog" class="image-dialog">
+  <button class="button quiet image-dialog-close" type="button" data-image-close aria-label="Close image">{{ icon('close') }}</button>
+  <img alt="">
+  <p></p>
+</dialog>
+{% endblock %}

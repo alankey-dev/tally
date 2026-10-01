@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}Quick add · Tally{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Quick add</h1>
+    <p class="lede">Type what you are putting away. Pick the matching variant and record how many arrived.</p>
+  </div>
+  <div class="page-actions">
+    <a class="button" href="{{url_for('new_item')}}">{{ icon('plus') }}New component</a>
+  </div>
+</section>
+
+<form class="search-panel quick-hero" action="{{url_for('quick_add')}}" role="search">
+  <label for="quick-query">What are you putting away?</label>
+  <div class="search large keep-button">
+    <div class="search-field">
+      {{ icon('search') }}
+      <input type="search" id="quick-query" name="q" value="{{query}}" placeholder="ESP32, Seeed XIAO, 100nF capacitor…" autocomplete="off" maxlength="200" autofocus>
+    </div>
+    <button class="primary">Find</button>
+  </div>
+</form>
+<p id="quick-status" role="status" class="quick-status"></p>
+
+{% if selected %}
+<form method="post" class="card form receive-form">
+  <p class="eyebrow"><code>{{selected['code']}}</code> · {{selected['label']}}</p>
+  <h2>{{selected['name']}}</h2>
+  <p class="copy card-intro">{{selected['quantity']|qty}} {{selected['unit']}} on hand now</p>
+  <input type="hidden" name="item" value="{{selected['id']}}">
+  <input type="hidden" name="q" value="{{query}}">
+  <input type="hidden" name="csrf" value="{{session['quick_csrf']}}">
+  <input type="hidden" name="token" value="{{token}}">
+  <label>Quantity to add ({{selected['unit']}})<input class="quantity-input" type="number" name="quantity" value="1" step="any" inputmode="decimal" required autofocus></label>
+  <div class="form-actions">
+    <button class="button primary">{{ icon('check') }}Add stock</button>
+    <a class="button quiet" href="{{url_for('quick_add', q=query)}}">Back to matches</a>
+  </div>
+</form>
+{% else %}
+<div id="quick-results">{% include 'quick_results.html' %}</div>
+{% endif %}
+<script src="{{url_for('static', filename='quick_add.js')}}" defer></script>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}Projects · Tally{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Projects</h1>
+  </div>
+  <div class="page-actions">
+    <button class="button primary" type="button" onclick="document.getElementById('new-project').showModal()">{{ icon('plus') }}New project</button>
+  </div>
+</section>
+
+<section class="project-grid">
+  {% for project in projects %}
+  <a class="project-card" href="{{url_for('project_detail', project_id=project['id'])}}">
+    {% if project['image_path'] %}<img src="{{url_for('uploaded_image', filename=project['image_path'])}}" alt="">{% endif %}
+    <div>
+      <h2>{{project['title']}}</h2>
+      <p>{{project['description'] or 'No description yet.'}}</p>
+      <span class="badge neutral">{{project['component_count']}} {{'component' if project['component_count'] == 1 else 'components'}}</span>
+    </div>
+  </a>
+  {% else %}
+  <div class="empty">No projects yet. Create one when you are ready to plan a build.</div>
+  {% endfor %}
+</section>
+
+<dialog id="new-project">
+  <form method="post" class="form" enctype="multipart/form-data">
+    <h2>New project</h2>
+    <label>Title<input required name="title" autofocus></label>
+    <label>Description <span class="optional">optional</span><textarea name="description" rows="3"></textarea></label>
+    <label>Image <span class="optional">optional</span><input name="image" type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"></label>
+    <div class="form-actions">
+      <button class="button primary">Create project</button>
+      <button type="button" class="button quiet" onclick="this.closest('dialog').close()">Cancel</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

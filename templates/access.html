@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}Unlock · Tally{% endblock %}
+{% block body_attrs %} class="access-page"{% endblock %}
+{% block content %}
+<section class="access-panel card">
+  <a class="brand" href="{{url_for('dashboard')}}"><span class="brand-mark">Ta</span>Tally</a>
+  <h1>Unlock Tally</h1>
+  <p class="copy">Enter the local access password to continue.</p>
+  <form method="post" class="form">
+    <label>Password<input name="password" type="password" required autofocus autocomplete="current-password"></label>
+    <button class="button primary block">Unlock</button>
+  </form>
+</section>
+{% endblock %}

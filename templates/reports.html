@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}Reports · Tally{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Reports</h1>
+  </div>
+</section>
+
+<section class="stack">
+  <div class="report-card card">
+    <div>
+      {{ icon('file') }}
+      <div>
+        <h2>Entire inventory</h2>
+        <p>Every component with quantities, thresholds, and storage locations.</p>
+      </div>
+    </div>
+    <div class="button-group">
+      <a class="button" href="{{url_for('export_inventory', format='csv')}}">{{ icon('download') }}CSV</a>
+      <a class="button" href="{{url_for('export_inventory', format='pdf')}}">{{ icon('download') }}PDF</a>
+    </div>
+  </div>
+  <div class="report-card card">
+    <div>
+      {{ icon('folder') }}
+      <div>
+        <h2>Project bills of materials</h2>
+        <p>Each project exports its own BOM from the project page.</p>
+      </div>
+    </div>
+    <div class="button-group">
+      <a class="button" href="{{url_for('projects')}}">Open projects</a>
+    </div>
+  </div>
+  <div class="report-card card">
+    <div>
+      {{ icon('archive') }}
+      <div>
+        <h2>Database backup</h2>
+        <p>A SQLite copy of everything, for safekeeping before maintenance.</p>
+      </div>
+    </div>
+    <div class="button-group">
+      <a class="button" href="{{url_for('download_backup')}}">{{ icon('download') }}Download backup</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

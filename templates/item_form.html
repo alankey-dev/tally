@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}New component · Tally{% endblock %}
+{% block content %}
+<a class="back" href="{{url_for('items')}}">{{ icon('back', 'small') }}Components</a>
+<section class="page-head">
+  <div>
+    <h1>New component</h1>
+    <p class="lede">Describe the part well enough to find it again, then give it a permanent home.</p>
+  </div>
+  <div class="page-actions">
+    <a class="button" href="{{url_for('quick_add')}}">{{ icon('zap') }}Quick add instead</a>
+  </div>
+</section>
+
+<form class="card form" method="post" enctype="multipart/form-data" id="guided-item-form">
+  <div class="form-section">
+    <h2>Identity</h2>
+    <p class="copy">The family decides which details are worth recording.</p>
+    <label>Item name<input required name="name" id="item-name" value="{{request.form.get('name', suggested_name)}}" autofocus placeholder="e.g. Seeed Studio XIAO ESP32-C3"></label>
+    <label>Component family<select name="family" id="item-family">{% for key, family in families.items() %}<option value="{{key}}" data-home="{{family_homes.get(key, '')}}"{% if key == selected_family %} selected{% endif %}>{{family['label']}}</option>{% endfor %}</select></label>
+    <div id="family-fields">
+      {% for family_key, family in families.items() %}
+      <fieldset class="guided-fields" data-family="{{family_key}}"{% if family_key != selected_family %} hidden{% endif %}>
+        <legend>{{family['label']}} details</legend>
+        <div class="form-grid">
+          {% for field in family['fields'] %}{% set key = field[0] %}{% set label = field[1] %}{% set field_type = field[2] %}{% set config = field[3] %}
+          <label>{{label}}{% if field_type == 'select' %}<select name="attr_{{key}}" data-attribute="{{key}}"><option value="">Choose…</option>{% for option in config %}<option value="{{option}}"{% if suggested_attributes.get(key) == option %} selected{% endif %}>{{option}}</option>{% endfor %}</select>{% else %}<input name="attr_{{key}}" data-attribute="{{key}}" type="{{field_type}}" value="{{suggested_manufacturer if key == 'manufacturer' else suggested_part_number if key == 'part_number' else suggested_attributes.get(key, '')}}" placeholder="{{config}}"{% if field_type == 'number' %} step="any" inputmode="decimal"{% endif %}>{% endif %}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h2>Stock</h2>
+    <p class="copy">How many you have right now and how they are counted.</p>
+    <div class="form-grid">
+      <label>Quantity<input name="quantity" type="number" step="any" min="0" inputmode="decimal" value="{{request.form.get('quantity', '0')}}"></label>
+      <label>Unit<input name="unit" value="{{request.form.get('unit', 'pcs')}}" placeholder="pcs, m, reel"></label>
+    </div>
+    <label>Component image or SVG <span class="optional">optional</span><input name="image" type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"></label>
+  </div>
+
+  <div class="form-section">
+    <h2>Home</h2>
+    <p class="copy">The drawer or box this part always returns to.</p>
+    {% if not locations %}<p class="copy">Add a <a href="{{url_for('locations')}}">storage location</a> first so the part has somewhere to live.</p>{% endif %}
+    <label>Find location<input type="search" id="location-filter" placeholder="Type a drawer name or code to filter the list"></label>
+    <label>Store in<select required name="location_id" id="location-select"><option value="">Choose a location</option>{% for location in locations %}<option value="{{location['id']}}" data-code="{{location['code']}}"{% if selected_location|string == location['id']|string %} selected{% endif %}>{{location['code']}}: {{location['label']}}</option>{% endfor %}</select></label>
+  </div>
+
+  <details class="optional-fields">
+    <summary>Low-stock threshold and notes</summary>
+    <label>Low-stock threshold <span class="optional">optional</span><input name="minimum_quantity" type="number" step="any" min="0" inputmode="decimal" value="{{request.form.get('minimum_quantity', '')}}" placeholder="Warn when on hand drops to this"></label>
+    <label>Notes <span class="optional">optional</span><textarea name="notes" rows="3">{{request.form.get('notes', '')}}</textarea></label>
+  </details>
+
+  <div class="form-actions">
+    <button class="button primary">Save component</button>
+    <a class="button quiet" href="{{url_for('items')}}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

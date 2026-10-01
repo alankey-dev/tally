@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import qty, icon %}
+{% block body_attrs %} data-live="true"{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Dashboard</h1>
+  </div>
+  <div class="page-actions">
+    <a class="button" href="{{url_for('stock')}}">{{ icon('swap') }}Stock</a>
+    <a class="button primary" href="{{url_for('quick_add')}}">{{ icon('zap') }}Quick add</a>
+  </div>
+</section>
+
+<form class="search large" action="{{url_for('stock')}}" role="search">
+  <div class="search-field">
+    {{ icon('search') }}
+    <input name="q" placeholder="Search components, locations, or part numbers" aria-label="Quick search">
+  </div>
+  <button>Search</button>
+</form>
+
+<section class="metrics" aria-label="Inventory summary">
+  <a class="metric" href="{{url_for('items')}}"><span>Components</span><strong>{{stats['items']}}</strong></a>
+  <a class="metric" href="{{url_for('locations')}}"><span>Storage locations</span><strong>{{stats['locations']}}</strong></a>
+  <a class="metric {{'warning' if stats['low_stock']}}" href="#low-stock"><span>Low stock</span><strong>{{stats['low_stock']}}</strong></a>
+</section>
+
+<section class="dashboard-grid">
+  <div class="stack">
+    <div class="card" id="low-stock">
+      <div class="card-head">
+        <h2>Low stock</h2>
+        <a href="{{url_for('stock')}}">Open stock</a>
+      </div>
+      {% if low %}
+      <div class="record-list">
+        {% for item in low %}
+        <a class="record" href="{{url_for('stock', add=item['id'])}}">
+          <div>
+            <strong>{{item['name']}}</strong>
+            <small><code>{{item['code']}}</code> · minimum {{item['minimum_quantity']|qty}} {{item['unit']}}</small>
+          </div>
+          {{ qty(item) }}
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty">Everything with a minimum is covered.</div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Recently updated</h2>
+        <a href="{{url_for('items')}}">All components</a>
+      </div>
+      {% if recent %}
+      <div class="record-list">
+        {% for item in recent %}
+        <a class="record" href="{{url_for('item_detail', item_id=item['id'])}}">
+          <div>
+            <strong>{{item['name']}}</strong>
+            <small><code>{{item['code']}}</code> · updated {{item['updated_at'][:10]}}</small>
+          </div>
+          {{ qty(item) }}
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty">No components yet. <a href="{{url_for('quick_add')}}">Add the first one.</a></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Current projects</h2>
+      <a href="{{url_for('projects')}}">View all</a>
+    </div>
+    {% if projects %}
+    <div class="record-list">
+      {% for project in projects %}
+      <a class="record" href="{{url_for('project_detail', project_id=project['id'])}}">
+        <div>
+          <strong>{{project['title']}}</strong>
+          <small>{{project['description'] or 'No description yet.'}}</small>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">No active projects. <a href="{{url_for('projects')}}">Create one.</a></div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

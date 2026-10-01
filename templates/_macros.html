@@ -1,0 +1,10 @@
+{# Shared fragments. qty() renders an on-hand figure with low/out-of-stock colouring. #}
+{% macro stock_state(item) -%}
+{{ 'out' if item['quantity'] <= 0 else ('low' if item['minimum_quantity'] is not none and item['quantity'] <= item['minimum_quantity'] else '') }}
+{%- endmacro %}
+{% macro qty(item) -%}
+<span class="qty {{ stock_state(item) }}">{{ item['quantity']|qty }} <span>{{ item['unit'] }}</span></span>
+{%- endmacro %}
+{% macro icon(name, extra='') -%}
+<svg class="icon {{ extra }}" aria-hidden="true"><use href="#i-{{ name }}"/></svg>
+{%- endmacro %}

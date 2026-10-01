@@ -1,0 +1,76 @@
+<h1 align="center">Tally</h1>
+
+<p align="center">Knows what parts you have, how many are left, and which drawer they live in.</p>
+
+<p align="center"><img src="docs/screenshot.png" alt="Tally dashboard" width="900"></p>
+
+Tally is a self-hosted inventory for an electronics workshop. One container, one SQLite file, no accounts, works on a phone at the bench.
+
+[MIT licensed](LICENSE).
+
+## Features
+
+- **Quick add.** Type what arrived, pick the matching variant, enter a count. Fuzzy matching forgives typos and spacing.
+- **Stock checkout.** Build a list, then record use, receipt, return, or loss in one action.
+- **Permanent homes.** Every part has a coded drawer or box. Search by name, part number, or location code.
+- **Low stock.** Set a minimum and the dashboard flags it.
+- **Projects.** Allocate parts to a build and export the bill of materials as CSV or PDF.
+- **Webhooks.** Send stock events to home automation or a drawer LED controller.
+- **Live display.** Open the dashboard on a spare tablet; it refreshes when anything changes.
+- **Light and dark**, system fonts, keyboard friendly, WCAG AA colours.
+
+## Quick start
+
+```sh
+mkdir tally && cd tally
+curl -fsSLO https://raw.githubusercontent.com/alankey-dev/tally-oss/main/docker-compose.yml
+docker compose up -d
+```
+
+Open <http://localhost:8000>. Data lives in the `tally-data` Docker volume.
+
+Or with plain Docker:
+
+```sh
+docker run -d --name tally -p 8000:8000 -v tally-data:/data ghcr.io/alankey-dev/tally:latest
+```
+
+The image runs on `amd64` and `arm64`, so a Raspberry Pi works too.
+
+## First steps
+
+1. **Add your storage.** Under **Storage**, add each drawer, shelf or box with a short permanent code such as `CAB1 S01`. Codes are grouped by their first word.
+2. **Add parts.** Use **Quick add** at the bench: type what arrived, pick the variant, enter a count.
+3. **Lock it.** Under **Settings**, set an access password and require sign-in before anyone else can reach Tally.
+
+Prefer to start from a ready-made layout? Set `TALLY_LAYOUT=example` before the first start for three 43-drawer cabinets and a set of boxes, or point it at your own JSON file (see [CONTRIBUTING.md](CONTRIBUTING.md#sharing-a-storage-layout)). It only applies while there is no storage yet.
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TALLY_PORT` | `8000` | Host port (Compose only). |
+| `SECRET_KEY` | generated | Signs the session cookie. If unset, one is generated and kept in the data volume. |
+| `TALLY_LAYOUT` | empty | Storage to create on first run: `example`, or a path to a JSON layout. |
+| `STORAGE_DB` | `/data/storage.db` | SQLite database path. |
+| `STORAGE_UPLOADS` | `/data/uploads` | Uploaded images. |
+
+Copy `.env.example` to `.env` to set these with Compose.
+
+## Exposing it to the internet
+
+Tally has one shared password, not user accounts. Before it is reachable from outside your network, put it behind a reverse proxy with HTTPS and require sign-in. See [SECURITY.md](SECURITY.md).
+
+## Backups
+
+**Settings → Download backup** saves the SQLite database. To include uploaded images, back up the whole volume:
+
+```sh
+docker run --rm -v tally-data:/data -v "$PWD":/backup alpine tar czf /backup/tally-backup.tgz -C /data .
+```
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). To build the image yourself, run `docker compose up -d --build`.
+
+Pushing a `v*` tag runs the tests and publishes a multi-arch image to GitHub Container Registry.

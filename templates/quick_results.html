@@ -1,0 +1,50 @@
+{% if query|length >= 2 %}
+<section class="quick-section">
+  <h2>Choose your variant</h2>
+  {% if matches %}
+  <div class="quick-matches">
+    {% for item in matches %}
+    <a class="quick-match" href="{{url_for('quick_add', q=query, item=item['id'])}}">
+      <strong>{{item['name']}}</strong>
+      <span>{{item['manufacturer']}} {{item['part_number']}}</span>
+      <span><code>{{item['code']}}</code> · {{item['label']}} · {{item['quantity']|qty}} {{item['unit']}} on hand</span>
+      <span class="cta">Add stock</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">No matching stock yet. Start a new variant below.</div>
+  {% endif %}
+</section>
+{% if catalogue %}
+<section class="quick-section">
+  <h2>Common devices</h2>
+  <p>Known boards with their details prefilled.</p>
+  <div class="quick-matches">
+    {% for item in catalogue %}
+    <a class="quick-match" href="{{url_for('new_item', catalogue=item['catalogue_id'])}}">
+      <strong>{{item['name']}}</strong>
+      <span>{{item['manufacturer']}} · {{item['part_number']}}</span>
+      <span class="cta">Use these details</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+<section class="quick-section">
+  <h2>New variant?</h2>
+  {% if homes %}
+  <p>Suggested homes based on the storage guide. Confirm the right one.</p>
+  <div class="quick-matches">
+    {% for home in homes %}
+    <a class="quick-match" href="{{url_for('new_item', name=query, location=home['id'])}}">
+      <strong><code>{{home['code']}}</code> {{home['label']}}</strong>
+      <span>Create a new variant here</span>
+      <span class="cta">Choose</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <a class="button" href="{{url_for('new_item', name=query)}}">Describe this item</a>
+</section>
+{% endif %}

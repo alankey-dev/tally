@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import stock_state, icon %}
+{% block title %}{{item['name']}} · Tally{% endblock %}
+{% block content %}
+<a class="back" href="{{url_for('items')}}">{{ icon('back', 'small') }}Components</a>
+<section class="page-head detail-head">
+  <div>
+    <p class="eyebrow"><code>{{item['code']}}</code> {{item['location_label']}}</p>
+    <h1>{{item['name']}}</h1>
+    {% if item['manufacturer'] or item['part_number'] %}<p class="lede">{{item['manufacturer']}} {{item['part_number']}}</p>{% endif %}
+  </div>
+  <div class="quantity-panel {{ stock_state(item) }}">
+    <strong>{{item['quantity']|qty}}</strong>
+    <span>{{item['unit']}} on hand</span>
+    {% if item['minimum_quantity'] is not none %}<small>Minimum {{item['minimum_quantity']|qty}} {{item['unit']}}</small>{% endif %}
+  </div>
+</section>
+
+<div class="page-actions start detail-actions">
+  <a class="button primary" href="{{url_for('stock', add=item['id'])}}">{{ icon('swap') }}Use in stock checkout</a>
+  <a class="button" href="{{url_for('quick_add', q=item['name'], item=item['id'])}}">{{ icon('zap') }}Receive stock</a>
+  <a class="button" href="{{url_for('locations', q=item['code'])}}">{{ icon('archive') }}Find the drawer</a>
+</div>
+
+{% if attributes or item['family'] != 'generic' %}
+<dl class="attribute-list">
+  <div><dt>Type</dt><dd>{{family['label']}}</dd></div>
+  {% for key, value in attributes.items() %}
+  <div><dt>{{attribute_labels.get(key, key.replace('_', ' ')|title)}}</dt><dd>{{value}}</dd></div>
+  {% endfor %}
+</dl>
+{% endif %}
+{% if item['notes'] %}<p class="notes">{{item['notes']}}</p>{% endif %}
+
+<section class="split">
+  <div class="card">
+    <h2>Adjust stock</h2>
+    <p class="copy card-intro">Record a single correction. Use the stock page for multi-part checkouts.</p>
+    <form class="adjust" method="post">
+      <label>Change<input name="quantity_change" required type="number" step="any" placeholder="Positive to add, negative to remove"></label>
+      <label>Reason<input name="reason" placeholder="e.g. Used in project"></label>
+      <button class="button primary">Record change</button>
+    </form>
+  </div>
+  <div>
+    <div class="section-head"><h2>History</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>When</th><th class="num">Change</th><th>Reason</th></tr></thead>
+        <tbody>
+          {% for movement in movements %}
+          <tr>
+            <td data-label="When">{{movement['occurred_at'][:10]}}</td>
+            <td data-label="Change" class="num {{'positive' if movement['quantity_change'] > 0 else 'danger-text'}}">{{'+' if movement['quantity_change'] > 0 else ''}}{{movement['quantity_change']|qty}}</td>
+            <td data-label="Reason">{{movement['reason']}}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3"><div class="empty">No stock movements yet.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}

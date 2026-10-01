@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}Storage · Tally{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Storage</h1>
+  </div>
+  <div class="page-actions">
+    <button class="button primary" type="button" onclick="document.getElementById('add-location').showModal()">{{ icon('plus') }}Add storage</button>
+  </div>
+</section>
+
+<form class="search keep-button" action="{{url_for('locations')}}" role="search">
+  <div class="search-field">
+    {{ icon('search') }}
+    <input id="location-search" type="search" name="q" value="{{query}}" placeholder="Find a drawer, shelf or box by name or code…" aria-label="Find a drawer or box">
+  </div>
+  <button>Find</button>
+</form>
+
+{% if active or query %}
+<a class="back" href="{{url_for('locations')}}">{{ icon('back', 'small') }}All storage</a>
+<div class="storage-heading">
+  <h2>{{'Search results' if query else groups.get(active, {}).get('name', active)}}</h2>
+  <small>{{locations|length}} {{'location' if locations|length == 1 else 'locations'}}</small>
+</div>
+<div class="drawer-list">
+  {% for location in locations %}
+  <details class="drawer">
+    <summary>
+      <code>{{location['code']}}</code>
+      <span>{{location['label']}}</span>
+      <span class="badge neutral">{{location['item_count']}} {{'item' if location['item_count'] == 1 else 'items'}}</span>
+    </summary>
+    <div class="drawer-actions">
+      <a class="button small" href="{{url_for('stock', q=location['code'])}}">{{ icon('swap', 'small') }}View stock</a>
+      <a class="button small" href="{{url_for('items', q=location['code'])}}">{{ icon('box', 'small') }}Components here</a>
+      <a class="button small" href="{{url_for('new_item', location=location['id'])}}">{{ icon('plus', 'small') }}Add component here</a>
+    </div>
+  </details>
+  {% else %}
+  <div class="empty">No locations found. <a href="{{url_for('locations')}}">Show all groups</a></div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="storage-groups">
+  {% for key, group in groups.items() %}
+  <a class="storage-group" href="{{url_for('locations', group=key)}}">
+    <code>{{key}}</code>
+    <h2>{{group['name']}}</h2>
+    <span>{{group['rows']|length}} {{'location' if group['rows']|length == 1 else 'locations'}}</span>
+  </a>
+  {% else %}
+  <div class="empty">No storage yet. Add each drawer, shelf or box you keep parts in. Codes are grouped by their first word, so <code>CAB1 S01</code> and <code>CAB1 S02</code> sit together.</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<dialog id="add-location">
+  <form method="post" action="{{url_for('new_location')}}" enctype="multipart/form-data" class="form">
+    <h2>Add storage</h2>
+    <label>Permanent code<input required name="code" placeholder="e.g. A01 or SHELF 2"></label>
+    <small class="hint">Codes that share a first word form a group: C4 S01 and C4 S02 both appear under C4.</small>
+    <label>Description<input required name="label" placeholder="What normally lives here"></label>
+    <label>Storage image or SVG <span class="optional">optional</span><input name="image" type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"></label>
+    <details>
+      <summary>More details</summary>
+      <label>Type<input name="kind" value="custom storage"></label>
+      <label>Notes<textarea name="notes" rows="3"></textarea></label>
+    </details>
+    <div class="form-actions">
+      <button class="button primary">Add storage</button>
+      <button type="button" class="button quiet" onclick="this.closest('dialog').close()">Cancel</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

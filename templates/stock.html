@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import stock_state, icon %}
+{% block body_attrs %} data-live="true"{% endblock %}
+{% block title %}Stock · Tally{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Stock</h1>
+    <p class="lede">Build one checkout list, then record the whole movement in a single action.</p>
+  </div>
+  <div class="page-actions">
+    <a class="button" href="{{url_for('quick_add')}}">{{ icon('zap') }}Quick add</a>
+    <a class="button" href="{{url_for('new_item')}}">{{ icon('plus') }}New component</a>
+  </div>
+</section>
+
+<div class="stock-layout">
+  <section>
+    <form class="search" autocomplete="off" aria-label="Search stock" role="search">
+      <div class="search-field">
+        {{ icon('search') }}
+        <input id="inventory-search" name="q" value="{{query}}" placeholder="Search components while you work">
+        <div id="search-suggestions" class="suggestions" hidden></div>
+      </div>
+      <button>Search</button>
+    </form>
+    <div class="record-list">
+      {% for item in items %}
+      <article class="record {{'is-selected' if selected_id == item['id']}}">
+        <div>
+          <strong>{{item['name']}}</strong>
+          <small><code>{{item['code']}}</code> · {{item['quantity']|qty}} {{item['unit']}} available{% if stock_state(item) %} <span class="badge warn">Low</span>{% endif %}</small>
+        </div>
+        <div class="record-actions">
+          <button type="button" class="button small" data-cart-add data-id="{{item['id']}}" data-name="{{item['name']}}" data-unit="{{item['unit']}}" data-available="{{item['quantity']}}">{{ icon('plus', 'small') }}Add</button>
+        </div>
+      </article>
+      {% else %}
+      <div class="empty">No matching components.</div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <aside class="card checkout-card" data-stock-checkout data-selected-id="{{selected_id or ''}}">
+    <form method="post" action="{{url_for('stock_checkout')}}">
+      <input type="hidden" name="cart" value="[]">
+      <div class="card-head">
+        <h2>Checkout list</h2>
+        <span class="badge neutral" data-cart-count>0 items</span>
+      </div>
+      <div class="checkout-lines" data-cart-lines>
+        <p class="empty">Add components from the list.</p>
+      </div>
+      <label>Action<select name="action" data-cart-action>
+        <option value="stock-out">Stock out: use components</option>
+        <option value="stock-in">Stock in: receive components</option>
+        <option value="return">Return components</option>
+        <option value="lost">Lost / damaged</option>
+      </select></label>
+      <button class="button primary checkout-submit">Record movement</button>
+    </form>
+  </aside>
+</div>
+<button type="button" class="button primary checkout-fab" data-checkout-fab hidden>{{ icon('cart') }}Checkout · <span data-cart-count>0 items</span></button>
+
+<section class="transactions">
+  <div class="section-head"><h2>Recent transactions</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Component</th><th class="num">Change</th><th>Reason</th><th>When</th></tr></thead>
+      <tbody>
+        {% for tx in recent %}
+        <tr>
+          <td data-label="Component">{{tx['name']}}</td>
+          <td data-label="Change" class="num {{'positive' if tx['quantity_change'] > 0 else 'danger-text'}}">{{'+' if tx['quantity_change'] > 0 else ''}}{{tx['quantity_change']|qty}} {{tx['unit']}}</td>
+          <td data-label="Reason">{{tx['reason']}}</td>
+          <td data-label="When">{{tx['occurred_at'][:16].replace('T', ' ')}}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4"><div class="empty">No transactions yet.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

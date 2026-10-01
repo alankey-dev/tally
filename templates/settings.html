@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}Settings · Tally{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Settings</h1>
+  </div>
+</section>
+
+<section class="settings-grid">
+  <div class="stack">
+    <div class="card">
+      <h2>Webhooks</h2>
+      <p class="copy">Each destination receives a JSON POST. Add more than one destination to the same event, for example an automation flow and a drawer LED controller.</p>
+      <form method="post" action="{{url_for('add_webhook')}}" class="webhook-form">
+        <label>Event<select name="event">
+          <option value="stock.in">Stock in</option>
+          <option value="stock.out">Stock out</option>
+          <option value="stock.returned">Return</option>
+          <option value="stock.lost">Lost / damaged</option>
+          <option value="project.component_added">Project component added</option>
+        </select></label>
+        <label>Destination URL<input name="destination_url" type="url" required placeholder="https://automation.example/hooks/led"></label>
+        <button class="button primary">Add destination</button>
+      </form>
+      <div class="webhook-list">
+        {% for webhook in webhooks %}
+        <div>
+          <span><strong>{{webhook['event']}}</strong><small>{{webhook['destination_url']}}</small></span>
+          <form method="post" action="{{url_for('delete_webhook', webhook_id=webhook['id'])}}"><button class="button small quiet danger">Remove</button></form>
+        </div>
+        {% else %}
+        <div class="empty">No webhook destinations configured.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Appearance</h2>
+      <p class="copy">Your choice is stored on this device only.</p>
+      <div class="theme-options" role="group" aria-label="Theme">
+        <button type="button" class="button" data-theme-choice="system">Match system</button>
+        <button type="button" class="button" data-theme-choice="light">{{ icon('sun') }}Light</button>
+        <button type="button" class="button" data-theme-choice="dark">{{ icon('moon') }}Dark</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <h2>Features</h2>
+      <p class="copy">Switch off what this workspace does not need.</p>
+      <form method="post" action="{{url_for('update_features')}}" class="feature-form">
+        {% for key, label in [('images', 'Display and upload images'), ('add_components', 'Add components'), ('edit_components', 'Edit components'), ('exports', 'Export CSV and PDF')] %}
+        <label class="check"><input name="{{key}}" type="checkbox"{% if flags[key] %} checked{% endif %}> {{label}}</label>
+        {% endfor %}
+        <button class="button primary">Save feature settings</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Access</h2>
+      <p class="copy">Sign-in is currently <strong>{{'required' if auth_enabled else 'off'}}</strong>. Set a password first, then require it.</p>
+      <form method="post" action="{{url_for('update_access_password')}}" class="password-form">
+        <label>Access password<input name="password" type="password" minlength="10" required autocomplete="new-password" placeholder="At least 10 characters"></label>
+        <button class="button">Save password</button>
+      </form>
+      <hr>
+      <form method="post" action="{{url_for('update_auth')}}" class="feature-form">
+        <label class="check"><input name="auth_enabled" type="checkbox"{% if auth_enabled %} checked{% endif %}> Require sign-in to use Tally</label>
+        <button class="button {{'primary' if not auth_enabled}}">{{'Save access setting' if auth_enabled else 'Require sign-in'}}</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Backups</h2>
+      <p class="copy">Download a SQLite backup before migrations or maintenance.</p>
+      <a class="button" href="{{url_for('download_backup')}}">{{ icon('download') }}Download backup</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}{{project['title']}} · Tally{% endblock %}
+{% block content %}
+<a class="back" href="{{url_for('projects')}}">{{ icon('back', 'small') }}Projects</a>
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Project</p>
+    <h1>{{project['title']}}</h1>
+    <p class="lede">{{project['description'] or 'No description yet.'}}</p>
+  </div>
+  <div class="page-actions">
+    <a class="button" href="{{url_for('export_bom', project_id=project['id'], format='csv')}}">{{ icon('download') }}CSV</a>
+    <a class="button" href="{{url_for('export_bom', project_id=project['id'], format='pdf')}}">{{ icon('download') }}PDF</a>
+  </div>
+</section>
+
+<section class="split wide">
+  <div class="card">
+    <div class="card-head">
+      <h2>Bill of materials</h2>
+      <span class="badge neutral">{{project_items|length}} {{'line' if project_items|length == 1 else 'lines'}}</span>
+    </div>
+    <div class="record-list">
+      {% for item in project_items %}
+      <div class="record">
+        <div>
+          <strong>{{item['name']}}</strong>
+          <small><code>{{item['code']}}</code> · {{item['part_number'] or 'No part number'}}</small>
+        </div>
+        <span class="qty">{{item['quantity']|qty}} <span>{{item['unit']}}</span></span>
+      </div>
+      {% else %}
+      <div class="empty">No components allocated yet. Search on the right to add some.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <aside class="card">
+    <h2>Add component</h2>
+    <form method="get" class="project-search" role="search">
+      <input name="q" value="{{query}}" placeholder="Search components" aria-label="Search components">
+      <button>Find</button>
+    </form>
+    {% if query %}
+    <div class="project-search-results">
+      {% for component in components %}
+      <form method="post">
+        <input type="hidden" name="item_id" value="{{component['id']}}">
+        <strong>{{component['name']}}</strong>
+        <small>{{component['quantity']|qty}} {{component['unit']}} available · <code>{{component['code']}}</code></small>
+        <label class="inline-qty">Qty<input name="quantity" value="1" min="0.01" step="any" type="number" aria-label="Quantity of {{component['name']}}"></label>
+        <button class="button small">Allocate</button>
+      </form>
+      {% else %}
+      <div class="empty">No components found.</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </aside>
+</section>
+{% endblock %}
