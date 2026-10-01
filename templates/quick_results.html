@@ -31,6 +31,33 @@
   </div>
 </section>
 {% endif %}
+{% if active_providers %}
+<section class="quick-section">
+  <h2>Search providers</h2>
+  {% if provider_results is none %}
+  <p>Not in your stock or catalogue? Look it up at {% for id in active_providers %}{{providers[id]['name']}}{{', ' if not loop.last}}{% endfor %}.</p>
+  <a class="button" data-provider-search href="{{url_for('quick_add', q=query, providers=1)}}">Search providers</a>
+  {% else %}
+  {% for id, error in provider_errors.items() %}<p class="empty">{{providers[id]['name']}}: {{error}}</p>{% endfor %}
+  {% for id, results in provider_results.items() %}
+  <h3>{{providers[id]['name']}}</h3>
+  {% if results %}
+  <div class="quick-matches">
+    {% for item in results %}
+    <a class="quick-match" href="{{item['link']}}">
+      <strong>{{item['name']}}</strong>
+      <span>{{item['manufacturer']}}{{' · ' if item['manufacturer'] and item['description']}}{{item['description']}}</span>
+      <span class="cta">Use these details</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">No results.</div>
+  {% endif %}
+  {% endfor %}
+  {% endif %}
+</section>
+{% endif %}
 <section class="quick-section">
   <h2>New variant?</h2>
   {% if homes %}
