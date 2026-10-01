@@ -1,0 +1,53 @@
+name: Deploy
+
+# Builds and (re)starts the app on the VPS's self-hosted runner, attached to the shared "edge"
+# network as {{SLUG}}:{{PORT}}. The public route lives in alankey-dev/edge-proxy (sites/{{HOSTNAME}}.caddy),
+# added once with that repo's "Add site" workflow.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-{{SLUG}}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, edge-proxy]
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Ensure shared edge network
+        run: docker network inspect edge >/dev/null 2>&1 || docker network create edge
+
+      # Optional: store the whole .env as one multi-line repository secret named APP_ENV.
+      - name: Write .env
+        env:
+          APP_ENV: ${{ secrets.APP_ENV }}
+        run: |
+          umask 077
+          if [ -n "$APP_ENV" ]; then printf '%s\n' "$APP_ENV" > .env; else rm -f .env; fi
+
+      - name: Build and start
+        run: |
+          set -euo pipefail
+          docker compose up -d --build --remove-orphans
+          docker image prune -f
+
+      - name: Check it answers on the edge network
+        run: |
+          for i in $(seq 1 30); do
+            if docker run --rm --network edge curlimages/curl -fsS -o /dev/null "http://{{SLUG}}:{{PORT}}/"; then
+              echo "{{SLUG}}:{{PORT}} is up"; exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs --tail 100
+          exit 1
+
+      - name: Status
+        if: always()
+        run: docker compose ps

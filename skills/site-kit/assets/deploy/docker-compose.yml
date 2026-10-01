@@ -1,0 +1,24 @@
+# Runs behind the shared edge proxy (alankey-dev/edge-proxy): no host ports, no Caddy of its own.
+# Caddy reaches this container as {{SLUG}}:{{PORT}} over the external "edge" network.
+name: {{SLUG}}
+services:
+  web:
+    build: .
+    container_name: {{SLUG}}
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - data:/data
+    networks:
+      default: {}
+      edge:
+        aliases: [{{SLUG}}]
+
+networks:
+  edge:
+    external: true
+
+volumes:
+  data:

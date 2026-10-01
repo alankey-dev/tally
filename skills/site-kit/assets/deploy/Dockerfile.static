@@ -1,0 +1,4 @@
+# Static site: everything in ./public is served on port 8080 as a non-root user.
+FROM nginxinc/nginx-unprivileged:alpine
+COPY public /usr/share/nginx/html
+EXPOSE 8080

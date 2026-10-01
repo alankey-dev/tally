@@ -1,0 +1,6 @@
+# Local development without the edge proxy: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+# Needs the network once: docker network create edge
+services:
+  web:
+    ports:
+      - "{{DEV_PORT}}:{{PORT}}"
