@@ -1,0 +1,12 @@
+{
+  "description": "Common development boards offered by quick add until you import your own catalogue.",
+  "items": [
+    {"name": "Seeed Studio XIAO ESP32-C3", "family": "microcontroller", "manufacturer": "Seeed Studio", "part_number": "XIAO ESP32-C3", "attributes": {"chip": "ESP32-C3", "variant": "XIAO", "connectivity": "Wi-Fi, Bluetooth 5", "flash": "4 MB", "form_factor": "XIAO"}},
+    {"name": "Seeed Studio XIAO ESP32-S3", "family": "microcontroller", "manufacturer": "Seeed Studio", "part_number": "XIAO ESP32-S3", "attributes": {"chip": "ESP32-S3", "variant": "XIAO", "connectivity": "Wi-Fi, Bluetooth 5", "flash": "8 MB", "form_factor": "XIAO"}},
+    {"name": "ESP32 DevKit V1", "family": "microcontroller", "manufacturer": "Espressif-compatible", "part_number": "ESP32 DevKit V1", "attributes": {"chip": "ESP32", "variant": "DevKit V1", "connectivity": "Wi-Fi, Bluetooth", "form_factor": "DevKit"}},
+    {"name": "ESP32-CAM", "family": "microcontroller", "manufacturer": "AI-Thinker-compatible", "part_number": "ESP32-CAM", "attributes": {"chip": "ESP32", "variant": "ESP32-CAM", "connectivity": "Wi-Fi, Bluetooth", "form_factor": "Camera module"}},
+    {"name": "ESP32-S3 DevKitC-1", "family": "microcontroller", "manufacturer": "Espressif", "part_number": "ESP32-S3-DevKitC-1", "attributes": {"chip": "ESP32-S3", "variant": "DevKitC-1", "connectivity": "Wi-Fi, Bluetooth 5", "form_factor": "DevKit"}},
+    {"name": "Raspberry Pi Pico", "family": "microcontroller", "manufacturer": "Raspberry Pi", "part_number": "Pico", "attributes": {"chip": "RP2040", "variant": "Pico", "flash": "2 MB", "form_factor": "Pico"}},
+    {"name": "Arduino Uno R3", "family": "microcontroller", "manufacturer": "Arduino", "part_number": "Uno R3", "attributes": {"chip": "ATmega328P", "variant": "Uno R3", "form_factor": "Arduino Uno"}}
+  ]
+}

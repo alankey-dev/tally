@@ -1,4 +1,11 @@
+import csv
+import io
+import json
+
 from app.matching import normalise, score
+
+MAX_CATALOGUE_ITEMS = 5000
+CATALOGUE_COLUMNS = {"name", "family", "manufacturer", "part_number"}
 
 
 FAMILIES = {
@@ -49,16 +56,6 @@ FAMILIES = {
     "generic": {"label": "Other item", "keywords": "", "fields": []},
 }
 
-COMMON_ITEMS = [
-    {"name": "Seeed Studio XIAO ESP32-C3", "family": "microcontroller", "manufacturer": "Seeed Studio", "part_number": "XIAO ESP32-C3", "attributes": {"chip": "ESP32-C3", "variant": "XIAO", "connectivity": "Wi-Fi, Bluetooth 5", "flash": "4 MB", "form_factor": "XIAO"}},
-    {"name": "Seeed Studio XIAO ESP32-S3", "family": "microcontroller", "manufacturer": "Seeed Studio", "part_number": "XIAO ESP32-S3", "attributes": {"chip": "ESP32-S3", "variant": "XIAO", "connectivity": "Wi-Fi, Bluetooth 5", "flash": "8 MB", "form_factor": "XIAO"}},
-    {"name": "ESP32 DevKit V1", "family": "microcontroller", "manufacturer": "Espressif-compatible", "part_number": "ESP32 DevKit V1", "attributes": {"chip": "ESP32", "variant": "DevKit V1", "connectivity": "Wi-Fi, Bluetooth", "form_factor": "DevKit"}},
-    {"name": "ESP32-CAM", "family": "microcontroller", "manufacturer": "AI-Thinker-compatible", "part_number": "ESP32-CAM", "attributes": {"chip": "ESP32", "variant": "ESP32-CAM", "connectivity": "Wi-Fi, Bluetooth", "form_factor": "Camera module"}},
-    {"name": "ESP32-S3 DevKitC-1", "family": "microcontroller", "manufacturer": "Espressif", "part_number": "ESP32-S3-DevKitC-1", "attributes": {"chip": "ESP32-S3", "variant": "DevKitC-1", "connectivity": "Wi-Fi, Bluetooth 5", "form_factor": "DevKit"}},
-    {"name": "Raspberry Pi Pico", "family": "microcontroller", "manufacturer": "Raspberry Pi", "part_number": "Pico", "attributes": {"chip": "RP2040", "variant": "Pico", "flash": "2 MB", "form_factor": "Pico"}},
-    {"name": "Arduino Uno R3", "family": "microcontroller", "manufacturer": "Arduino", "part_number": "Uno R3", "attributes": {"chip": "ATmega328P", "variant": "Uno R3", "form_factor": "Arduino Uno"}},
-]
-
 
 def classify(query):
     best_key, best_score = "generic", 0
@@ -72,13 +69,50 @@ def classify(query):
     return best_key if best_score >= .68 else "generic"
 
 
-def common_suggestions(query, limit=6):
-    scored = [(score(query, item["name"] + " " + item["manufacturer"] + " " + item["part_number"]), index, item) for index, item in enumerate(COMMON_ITEMS)]
-    return [{**item, "catalogue_id": index} for value, index, item in sorted(scored, key=lambda row: -row[0]) if value >= .65][:limit]
+def common_suggestions(query, entries, limit=6):
+    scored = [(score(query, entry["name"] + " " + entry["manufacturer"] + " " + entry["part_number"]), entry) for entry in entries]
+    return [entry for value, entry in sorted(scored, key=lambda row: -row[0]) if value >= .65][:limit]
 
 
-def catalogue_item(item_id):
+def parse_catalogue(raw):
+    """Read catalogue entries from JSON (a list, or an object with "items") or CSV.
+
+    CSV needs a name column; family, manufacturer and part_number are optional and
+    every other non-empty column becomes an attribute.
+    """
     try:
-        return COMMON_ITEMS[int(item_id)]
-    except (ValueError, TypeError, IndexError):
-        return None
+        text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw
+    except UnicodeDecodeError:
+        raise ValueError("Catalogue files must be UTF-8 text.") from None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        rows = list(csv.DictReader(io.StringIO(text)))
+        if not rows or "name" not in rows[0]:
+            raise ValueError("Use a JSON catalogue or a CSV file with a name column.")
+        data = [{
+            "name": row.get("name"), "family": row.get("family"), "manufacturer": row.get("manufacturer"), "part_number": row.get("part_number"),
+            "attributes": {key: value for key, value in row.items() if key and key not in CATALOGUE_COLUMNS and value},
+        } for row in rows]
+    if isinstance(data, dict):
+        data = data.get("items")
+    if not isinstance(data, list):
+        raise ValueError("A JSON catalogue must be a list of items or an object with an items list.")
+    if len(data) > MAX_CATALOGUE_ITEMS:
+        raise ValueError(f"A catalogue can hold at most {MAX_CATALOGUE_ITEMS} items.")
+    entries = {}
+    for item in data:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"].strip():
+            raise ValueError("Every catalogue item needs a name.")
+        attributes = item.get("attributes") or {}
+        if not isinstance(attributes, dict):
+            raise ValueError(f"Attributes for {item['name'].strip()} must be an object.")
+        family = item.get("family") if item.get("family") in FAMILIES else "generic"
+        entry = {
+            "name": item["name"].strip()[:200], "family": family,
+            "manufacturer": str(item.get("manufacturer") or "").strip()[:200],
+            "part_number": str(item.get("part_number") or "").strip()[:200],
+            "attributes": {str(key)[:64]: str(value).strip()[:200] for key, value in attributes.items() if value not in (None, "")},
+        }
+        entries[entry["name"].casefold()] = entry
+    return list(entries.values())
