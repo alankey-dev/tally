@@ -1,0 +1,25 @@
+<div class="card">
+  <h2>Webhooks</h2>
+  <p class="copy">Each destination receives a JSON POST. Add more than one destination to the same event, for example an automation flow and a drawer LED controller.</p>
+  <form method="post" action="{{url_for('add_webhook')}}" class="webhook-form">
+    <label>Event<select name="event">
+      <option value="stock.in">Stock in</option>
+      <option value="stock.out">Stock out</option>
+      <option value="stock.returned">Return</option>
+      <option value="stock.lost">Lost / damaged</option>
+      <option value="project.built">Project built</option>
+    </select></label>
+    <label>Destination URL<input name="destination_url" type="url" required placeholder="https://automation.example/hooks/led"></label>
+    <button class="button primary">Add destination</button>
+  </form>
+  <div class="webhook-list">
+    {% for webhook in webhooks %}
+    <div>
+      <span><strong>{{webhook['event']}}</strong><small>{{webhook['destination_url']}}</small></span>
+      <form method="post" action="{{url_for('delete_webhook', webhook_id=webhook['id'])}}"><button class="button small quiet danger">Remove</button></form>
+    </div>
+    {% else %}
+    <div class="empty">No webhook destinations configured.</div>
+    {% endfor %}
+  </div>
+</div>

@@ -90,7 +90,7 @@ class QuickAddTests(unittest.TestCase):
         self.assertEqual(urlopen.call_args[0][0].full_url, "https://example.com/parts.json")
         exported = self.client.get("/settings/catalogue.json").json["items"]
         self.assertEqual([(item["name"], item["family"], item["part_number"]) for item in exported], [("bme280 BREAKOUT", "sensor", "BME280-B"), ("Unknown thing", "generic", "")])
-        self.assertIn('value="https://example.com/parts.json"', self.client.get("/settings").get_data(as_text=True))
+        self.assertIn('value="https://example.com/parts.json"', self.client.get("/settings/catalogue").get_data(as_text=True))
 
         for bad in (b"[{\"family\": \"sensor\"}]", b"not,a,catalogue\n1,2,3", b"\xff\xfe"):
             response = self.client.post("/settings/catalogue", data={"file": (io.BytesIO(bad), "bad.json")}, content_type="multipart/form-data", follow_redirects=True)
@@ -145,11 +145,11 @@ class ProviderTests(unittest.TestCase):
         self.directory.cleanup()
 
     def test_settings_list_providers_and_hide_saved_key(self):
-        html = self.client.get("/settings").get_data(as_text=True)
+        html = self.client.get("/settings/providers").get_data(as_text=True)
         self.assertIn("JLCPCB / LCSC", html)
         self.assertIn("Mouser", html)
         self.client.post("/settings/providers/mouser", data=dict(enabled="1", api_key="secret-key"))
-        html = self.client.get("/settings").get_data(as_text=True)
+        html = self.client.get("/settings/providers").get_data(as_text=True)
         self.assertNotIn("secret-key", html)
         self.client.post("/settings/providers/mouser", data=dict(enabled="1", api_key=""))
         with main.app.app_context():
@@ -185,3 +185,31 @@ class ProviderTests(unittest.TestCase):
         with mock.patch.object(main.part_providers, "_request", return_value=body):
             results = main.part_providers.search_mouser("10k", {"api_key": "k"})
         self.assertEqual((results[0]["manufacturer"], results[0]["family"], results[0]["attributes"]["mouser"]), ("YAGEO", "resistor", "603-RC0805FR-0710KL"))
+
+
+class SettingsPageTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.previous_path, self.previous_layout = main.DB_PATH, main.LAYOUT
+        main.DB_PATH = Path(self.directory.name) / "test.db"
+        main.LAYOUT = "example"
+        self.client = main.app.test_client()
+
+    def tearDown(self):
+        main.DB_PATH, main.LAYOUT = self.previous_path, self.previous_layout
+        self.directory.cleanup()
+
+    def test_each_section_has_its_own_page(self):
+        expected = {"": "Features", "catalogue": "Quick add catalogue", "providers": "Part search providers", "webhooks": "Destination URL", "security": "Download backup"}
+        for section, text in expected.items():
+            html = self.client.get(f"/settings/{section}".rstrip("/")).get_data(as_text=True)
+            self.assertIn(text, html, section)
+            for other, other_text in expected.items():
+                if other != section:
+                    self.assertNotIn(f"<h2>{other_text}</h2>", html)
+        self.assertEqual(self.client.get("/settings/nope").status_code, 404)
+
+    def test_saving_returns_to_the_same_section(self):
+        self.assertTrue(self.client.post("/settings/providers/mouser", data={}).location.endswith("/settings/providers"))
+        self.assertTrue(self.client.post("/settings/webhooks", data={}).location.endswith("/settings/webhooks"))
+        self.assertTrue(self.client.post("/settings/features", data={}).location.endswith("/settings"))

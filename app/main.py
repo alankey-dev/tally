@@ -786,13 +786,26 @@ def export_rows(rows, columns, filename, format, title):
     pdf.save(); output.seek(0)
     return send_file(output, mimetype="application/pdf", as_attachment=True, download_name=f"{filename}.pdf")
 
+SETTINGS_SECTIONS = {"general": "General", "catalogue": "Catalogue", "providers": "Part search", "webhooks": "Webhooks", "security": "Access and backups"}
+
 @app.route("/settings")
-def settings():
-    flags = {flag: enabled(flag) for flag in ("images", "add_components", "edit_components", "exports")}
-    webhooks = db().execute("SELECT * FROM webhooks ORDER BY event, id").fetchall()
-    catalogue_count = db().execute("SELECT COUNT(*) FROM catalogue").fetchone()[0]
-    source = db().execute("SELECT value FROM settings WHERE key='catalogue.url'").fetchone()
-    return render_template("settings.html", webhooks=webhooks, flags=flags, auth_enabled=auth_enabled(), catalogue_count=catalogue_count, catalogue_url=source["value"] if source else "", providers=part_providers.PROVIDERS, provider_configs=provider_configs(), is_configured=part_providers.is_configured)
+@app.route("/settings/<section>")
+def settings(section="general"):
+    if section not in SETTINGS_SECTIONS:
+        abort(404)
+    context = dict(section=section, sections=SETTINGS_SECTIONS)
+    if section == "general":
+        context["flags"] = {flag: enabled(flag) for flag in ("images", "add_components", "edit_components", "exports")}
+    elif section == "webhooks":
+        context["webhooks"] = db().execute("SELECT * FROM webhooks ORDER BY event, id").fetchall()
+    elif section == "catalogue":
+        source = db().execute("SELECT value FROM settings WHERE key='catalogue.url'").fetchone()
+        context.update(catalogue_count=db().execute("SELECT COUNT(*) FROM catalogue").fetchone()[0], catalogue_url=source["value"] if source else "")
+    elif section == "providers":
+        context.update(providers=part_providers.PROVIDERS, provider_configs=provider_configs(), is_configured=part_providers.is_configured)
+    elif section == "security":
+        context["auth_enabled"] = auth_enabled()
+    return render_template("settings.html", **context)
 
 @app.route("/settings/catalogue", methods=["POST"])
 def import_catalogue():
@@ -811,14 +824,14 @@ def import_catalogue():
             raise ValueError("Choose a catalogue file or enter a URL.")
     except ValueError as error:
         flash(str(error), "error")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", section="catalogue"))
     conn = db()
     with conn:
         save_catalogue(conn, entries, replace=bool(request.form.get("replace")))
         if url and not (upload and upload.filename):
             conn.execute("INSERT INTO settings(key, value) VALUES ('catalogue.url', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (url,))
     flash(f"Catalogue updated with {len(entries)} item{'s' if len(entries) != 1 else ''}.", "success")
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", section="catalogue"))
 
 @app.route("/settings/catalogue.json")
 def export_catalogue():
@@ -842,7 +855,7 @@ def update_provider(provider_id):
             elif request.form.get(f"clear_{key}"):
                 set_setting(f"provider.{provider_id}.{key}", "")
     flash(f"{provider['name']} settings saved.", "success")
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", section="providers"))
 
 @app.route("/settings/webhooks", methods=["POST"])
 def add_webhook():
@@ -853,13 +866,13 @@ def add_webhook():
     else:
         db().execute("INSERT INTO webhooks(event, destination_url, created_at) VALUES (?, ?, ?)", (event, destination_url, datetime.now(timezone.utc).isoformat())); db().commit()
         flash("Webhook destination added.", "success")
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", section="webhooks"))
 
 @app.route("/settings/webhooks/<int:webhook_id>/delete", methods=["POST"])
 def delete_webhook(webhook_id):
     db().execute("DELETE FROM webhooks WHERE id=?", (webhook_id,)); db().commit()
     flash("Webhook destination removed.", "success")
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", section="webhooks"))
 
 @app.route("/settings/features", methods=["POST"])
 def update_features():
@@ -878,7 +891,7 @@ def update_access_password():
         set_setting("access.password_hash", password_hash)
         session["access_unlocked"] = access_token(password_hash)
         db().commit(); flash("Access password saved.", "success")
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", section="security"))
 
 @app.route("/settings/auth", methods=["POST"])
 def update_auth():
@@ -892,7 +905,7 @@ def update_auth():
             session.pop("access_unlocked", None)
         db().commit()
         flash("Authentication enabled." if should_enable else "Authentication disabled.", "success")
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", section="security"))
 
 @app.route("/settings/backup")
 def download_backup():
