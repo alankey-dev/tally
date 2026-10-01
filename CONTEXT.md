@@ -24,3 +24,10 @@ _Avoid_: Bin, category
 
 **Stock movement**:
 A dated increase or decrease to an item’s on-hand quantity.
+
+**Line**:
+An item a project’s bill of materials needs, with the quantity one build takes. Adding a line never moves stock.
+_Avoid_: Allocation
+
+**Build**:
+One recorded consumption of a project’s whole bill of materials, a number of boards at a time. It writes a stock movement per line and can be undone, which returns exactly what it took.

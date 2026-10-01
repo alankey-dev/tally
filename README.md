@@ -14,8 +14,8 @@ Tally is a self-hosted inventory for an electronics workshop. One container, one
 - **Stock checkout.** Build a list, then record use, receipt, return, or loss in one action.
 - **Permanent homes.** Every part has a coded drawer or box. Search by name, part number, or location code.
 - **Low stock.** Set a minimum and the dashboard flags it.
-- **Projects.** Allocate parts to a build and export the bill of materials as CSV or PDF.
-- **Webhooks.** Send stock events to home automation or a drawer LED controller.
+- **Projects.** Keep each build's bill of materials, see how many you can build from stock and which lines fall short, then build ×N to take every part in one go. Undo if you change your mind. Export the BOM as CSV or PDF.
+- **Webhooks.** Send stock and build events to home automation or a drawer LED controller.
 - **Live display.** Open the dashboard on a spare tablet; it refreshes when anything changes.
 - **Light and dark**, system fonts, keyboard friendly, WCAG AA colours.
 

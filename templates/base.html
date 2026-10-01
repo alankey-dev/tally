@@ -15,7 +15,7 @@
   <meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
   <link rel="icon" href="{{url_for('static', filename='favicon.svg')}}">
   <link rel="stylesheet" href="{{url_for('static', filename='tailwind.generated.css', v='2')}}">
-  <link rel="stylesheet" href="{{url_for('static', filename='app.css', v='9')}}">
+  <link rel="stylesheet" href="{{url_for('static', filename='app.css', v='10')}}">
   <script>try { var t = localStorage.getItem('tally-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
 <body{% block body_attrs %}{% endblock %}>
@@ -95,6 +95,6 @@
     {% endfor %}
   </nav>
 </div>
-<script src="{{url_for('static', filename='app.js', v='7')}}" defer></script>
+<script src="{{url_for('static', filename='app.js', v='8')}}" defer></script>
 </body>
 </html>

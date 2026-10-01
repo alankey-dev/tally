@@ -71,7 +71,8 @@ def init_db():
     CREATE TABLE IF NOT EXISTS movements (id INTEGER PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES items(id), quantity_change REAL NOT NULL, reason TEXT NOT NULL, occurred_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS stock_receipts (token TEXT PRIMARY KEY, item_id INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY, title TEXT NOT NULL, description TEXT DEFAULT '', image_path TEXT DEFAULT '', created_at TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS project_items (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, item_id INTEGER NOT NULL REFERENCES items(id), quantity REAL NOT NULL, PRIMARY KEY(project_id, item_id));
+    CREATE TABLE IF NOT EXISTS project_items (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, item_id INTEGER NOT NULL REFERENCES items(id), quantity REAL NOT NULL DEFAULT 0, per_build REAL NOT NULL DEFAULT 0, PRIMARY KEY(project_id, item_id));
+    CREATE TABLE IF NOT EXISTS builds (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, quantity INTEGER NOT NULL, lines TEXT NOT NULL, built_at TEXT NOT NULL, undone_at TEXT);
     CREATE TABLE IF NOT EXISTS webhooks (id INTEGER PRIMARY KEY, event TEXT NOT NULL, destination_url TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, family TEXT NOT NULL DEFAULT 'generic', manufacturer TEXT DEFAULT '', part_number TEXT DEFAULT '', attributes TEXT NOT NULL DEFAULT '{}');
@@ -88,6 +89,18 @@ def init_db():
         conn.execute("ALTER TABLE locations ADD COLUMN image_path TEXT DEFAULT ''")
     if "keywords" not in location_columns:
         conn.execute("ALTER TABLE locations ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
+    project_columns = {row["name"] for row in conn.execute("PRAGMA table_info(project_items)")}
+    if "per_build" not in project_columns:
+        # A line's quantity is the stock it has consumed; per_build is what one build needs. Lines allocated
+        # before build planning were taken from stock on the spot, so keep them as consumed, take them as the
+        # recipe for one build, and log that build so it can be undone like any other.
+        conn.execute("ALTER TABLE project_items ADD COLUMN per_build REAL NOT NULL DEFAULT 0")
+        conn.execute("UPDATE project_items SET per_build=quantity")
+        lines = {}
+        for row in conn.execute("SELECT project_id, item_id, quantity FROM project_items ORDER BY project_id, item_id"):
+            lines.setdefault(row["project_id"], []).append([row["item_id"], row["quantity"]])
+        now = datetime.now(timezone.utc).isoformat()
+        conn.executemany("INSERT INTO builds(project_id, quantity, lines, built_at) VALUES (?, 1, ?, ?)", [(project_id, json.dumps(rows), now) for project_id, rows in lines.items()])
     if LAYOUT and conn.execute("SELECT COUNT(*) FROM locations").fetchone()[0] == 0:
         seed_layout(conn, load_layout(LAYOUT))
     elif LAYOUT and not conn.execute("SELECT 1 FROM settings WHERE key='layout.groups'").fetchone():
@@ -254,7 +267,7 @@ def dashboard():
     recent = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id ORDER BY i.updated_at DESC LIMIT 8").fetchall()
     low = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.minimum_quantity IS NOT NULL AND i.quantity <= i.minimum_quantity ORDER BY i.quantity LIMIT 8").fetchall()
     projects = conn.execute("SELECT * FROM projects ORDER BY created_at DESC LIMIT 4").fetchall()
-    return render_template("dashboard.html", stats=stats, recent=recent, low=low, projects=projects)
+    return render_template("dashboard.html", stats=stats, recent=recent, low=low, projects=projects, buildable=project_build_counts(conn))
 
 @app.route("/components")
 @app.route("/items")
@@ -530,7 +543,33 @@ def projects():
             except ValueError as exc:
                 flash(str(exc), "error")
     rows = conn.execute("SELECT p.*, count(pi.item_id) AS component_count FROM projects p LEFT JOIN project_items pi ON pi.project_id=p.id GROUP BY p.id ORDER BY p.created_at DESC").fetchall()
-    return render_template("projects.html", projects=rows)
+    return render_template("projects.html", projects=rows, buildable=project_build_counts(conn))
+
+# Quantities are floats, so a line that is exactly covered can come out a hair short; ignore differences this small.
+TOLERANCE = 1e-9
+
+def project_plan(conn, project_id, wanted=1):
+    """Each bill-of-materials line with what `wanted` builds need, what is on hand, and the shortfall."""
+    rows = conn.execute("""SELECT i.id, i.name, i.part_number, i.unit, i.quantity AS on_hand, l.code, pi.per_build, pi.quantity AS consumed
+        FROM project_items pi JOIN items i ON i.id=pi.item_id JOIN locations l ON l.id=i.location_id
+        WHERE pi.project_id=? ORDER BY i.name COLLATE NOCASE""", (project_id,)).fetchall()
+    plan = []
+    for row in rows:
+        need = row["per_build"] * wanted
+        short = need - row["on_hand"]
+        plan.append({**dict(row), "need": need, "short": short if short > TOLERANCE else 0})
+    return plan
+
+def buildable(lines):
+    """How many complete builds the stock on hand covers: the tightest line decides, and no lines means none."""
+    return max(0, min((math.floor(line["on_hand"] / line["per_build"] + TOLERANCE) for line in lines if line["per_build"] > 0), default=0))
+
+def project_build_counts(conn):
+    """Builds possible for every project that has a bill of materials, keyed by project id."""
+    lines = {}
+    for row in conn.execute("SELECT pi.project_id, pi.per_build, i.quantity AS on_hand FROM project_items pi JOIN items i ON i.id=pi.item_id"):
+        lines.setdefault(row["project_id"], []).append(row)
+    return {project_id: buildable(rows) for project_id, rows in lines.items()}
 
 @app.route("/projects/<int:project_id>", methods=["GET", "POST"])
 def project_detail(project_id):
@@ -541,19 +580,19 @@ def project_detail(project_id):
     if request.method == "POST":
         item_id = request.form.get("item_id", type=int)
         try:
-            quantity = float(request.form.get("quantity", "1"))
-            if not item_id or not math.isfinite(quantity) or quantity <= 0:
+            per_build = float(request.form.get("per_build", "1"))
+            if not item_id or not math.isfinite(per_build) or per_build <= 0 or not conn.execute("SELECT 1 FROM items WHERE id=?", (item_id,)).fetchone():
                 raise ValueError()
-            item = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.id=?", (item_id,)).fetchone()
-            if item is None or item["quantity"] < quantity:
-                raise ValueError()
-            with conn:
-                conn.execute("INSERT INTO project_items(project_id,item_id,quantity) VALUES (?,?,?) ON CONFLICT(project_id,item_id) DO UPDATE SET quantity=quantity+excluded.quantity", (project_id, item_id, quantity))
-                record_movement(conn, item, -quantity, f"Used in project: {project['title']}", "project.component_added", {"id": project_id, "title": project["title"]})
-            flash("Component added to project and removed from stock.", "success")
         except (ValueError, TypeError):
-            flash("Choose a component with an available quantity.", "error")
+            flash("Choose a component and enter how many one build needs.", "error")
+        else:
+            conn.execute("INSERT INTO project_items(project_id, item_id, quantity, per_build) VALUES (?, ?, 0, ?) ON CONFLICT(project_id, item_id) DO UPDATE SET per_build=excluded.per_build", (project_id, item_id, per_build))
+            conn.commit()
+            flash("Line added. Stock is only taken when you build.", "success")
         return redirect(url_for("project_detail", project_id=project_id))
+    wanted = max(1, request.args.get("quantity", 1, type=int) or 1)
+    plan = project_plan(conn, project_id, wanted)
+    builds = conn.execute("SELECT * FROM builds WHERE project_id=? ORDER BY built_at DESC, id DESC", (project_id,)).fetchall()
     query = request.args.get("q", "").strip()
     component_sql = "SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id"
     args = []
@@ -561,16 +600,93 @@ def project_detail(project_id):
         component_sql += " WHERE i.name LIKE ? OR i.part_number LIKE ?"
         args = [f"%{query}%"] * 2
     component_sql += " ORDER BY i.name COLLATE NOCASE LIMIT 30"
-    project_items = conn.execute("SELECT pi.*, i.name, i.part_number, i.unit, i.image_path, l.code FROM project_items pi JOIN items i ON i.id=pi.item_id JOIN locations l ON l.id=i.location_id WHERE pi.project_id=? ORDER BY i.name", (project_id,)).fetchall()
-    return render_template("project_detail.html", project=project, project_items=project_items, components=conn.execute(component_sql, args).fetchall(), query=query)
+    return render_template("project_detail.html", project=project, plan=plan, wanted=wanted, buildable=buildable(plan), builds=builds, components=conn.execute(component_sql, args).fetchall(), query=query)
+
+@app.route("/projects/<int:project_id>/lines/<int:item_id>", methods=["POST"])
+def update_project_line(project_id, item_id):
+    conn = db()
+    if not conn.execute("SELECT 1 FROM project_items WHERE project_id=? AND item_id=?", (project_id, item_id)).fetchone():
+        abort(404)
+    try:
+        per_build = float(request.form.get("per_build", ""))
+        if not math.isfinite(per_build) or per_build <= 0:
+            raise ValueError()
+    except (ValueError, TypeError):
+        flash("Enter how many one build needs, greater than zero.", "error")
+    else:
+        conn.execute("UPDATE project_items SET per_build=? WHERE project_id=? AND item_id=?", (per_build, project_id, item_id))
+        conn.commit()
+        flash("Line updated.", "success")
+    return redirect(url_for("project_detail", project_id=project_id))
+
+@app.route("/projects/<int:project_id>/lines/<int:item_id>/delete", methods=["POST"])
+def delete_project_line(project_id, item_id):
+    conn = db()
+    if not conn.execute("DELETE FROM project_items WHERE project_id=? AND item_id=?", (project_id, item_id)).rowcount:
+        abort(404)
+    conn.commit()
+    flash("Line removed. Stock it has already used stays in the history.", "success")
+    return redirect(url_for("project_detail", project_id=project_id))
+
+@app.route("/projects/<int:project_id>/build", methods=["POST"])
+def build_project(project_id):
+    """Take every line of the bill of materials from stock, `wanted` times over, or nothing at all."""
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    if not project:
+        abort(404)
+    wanted = request.form.get("quantity", type=int)
+    plan = project_plan(conn, project_id, wanted) if wanted and wanted > 0 else []
+    short = [line for line in plan if line["short"] > 0]
+    if not wanted or wanted < 1:
+        flash("Enter how many to build: a whole number of at least 1.", "error")
+    elif not plan:
+        flash("Add at least one line to the bill of materials first.", "error")
+    elif short:
+        detail = "; ".join(f"{line['name']} needs {format_quantity(line['need'])} {line['unit']}, {format_quantity(line['on_hand'])} on hand" for line in short[:3])
+        more = f" and {len(short) - 3} more" if len(short) > 3 else ""
+        flash(f"Not enough stock to build {wanted}: {detail}{more}.", "error")
+    else:
+        reference = {"id": project_id, "title": project["title"]}
+        with conn:
+            for line in plan:
+                record_movement(conn, line, -line["need"], f"Built {project['title']} ×{wanted}", "stock.out", reference)
+                conn.execute("UPDATE project_items SET quantity=quantity+? WHERE project_id=? AND item_id=?", (line["need"], project_id, line["id"]))
+            build_id = conn.execute("INSERT INTO builds(project_id, quantity, lines, built_at) VALUES (?, ?, ?, ?)", (project_id, wanted, json.dumps([[line["id"], line["need"]] for line in plan]), datetime.now(timezone.utc).isoformat())).lastrowid
+        dispatch_webhooks("project.built", {"project": reference, "build_id": build_id, "quantity": wanted, "lines": [{"item": {"id": line["id"], "name": line["name"], "part_number": line["part_number"], "location": line["code"]}, "quantity_change": -line["need"], "unit": line["unit"]} for line in plan]})
+        flash(f"Built {project['title']} ×{wanted}: {len(plan)} line{'s' if len(plan) != 1 else ''} taken from stock.", "success")
+    return redirect(url_for("project_detail", project_id=project_id))
+
+@app.route("/projects/<int:project_id>/builds/<int:build_id>/undo", methods=["POST"])
+def undo_build(project_id, build_id):
+    """Return exactly what a build took, even if the bill of materials has changed since."""
+    conn = db()
+    build = conn.execute("SELECT b.*, p.title FROM builds b JOIN projects p ON p.id=b.project_id WHERE b.id=? AND b.project_id=?", (build_id, project_id)).fetchone()
+    if not build:
+        abort(404)
+    if build["undone_at"]:
+        flash("That build was already undone.", "error")
+        return redirect(url_for("project_detail", project_id=project_id))
+    lines = json.loads(build["lines"])
+    reason = f"Unbuilt {build['title']} ×{build['quantity']}"
+    with conn:
+        for item_id, quantity in lines:
+            item = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.id=?", (item_id,)).fetchone()
+            if item is None:
+                continue
+            record_movement(conn, item, quantity, reason, "stock.returned", {"id": project_id, "title": build["title"]})
+            conn.execute("UPDATE project_items SET quantity=max(quantity-?, 0) WHERE project_id=? AND item_id=?", (quantity, project_id, item_id))
+        conn.execute("UPDATE builds SET undone_at=? WHERE id=?", (datetime.now(timezone.utc).isoformat(), build_id))
+    flash(f"Build undone: {len(lines)} line{'s' if len(lines) != 1 else ''} returned to stock.", "success")
+    return redirect(url_for("project_detail", project_id=project_id))
 
 @app.route("/projects/<int:project_id>/bom.<format>")
 def export_bom(project_id, format):
     project = db().execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
     if not project or format not in {"csv", "pdf"}:
         abort(404)
-    rows = db().execute("SELECT i.name, i.part_number, pi.quantity, i.unit, l.code FROM project_items pi JOIN items i ON i.id=pi.item_id JOIN locations l ON l.id=i.location_id WHERE pi.project_id=? ORDER BY i.name", (project_id,)).fetchall()
-    return export_rows(rows, ["Component", "Part number", "Quantity", "Unit", "Location"], f"{project['title']}-bom", format, f"Bill of materials · {project['title']}")
+    rows = db().execute("SELECT i.name, i.part_number, pi.per_build, pi.quantity, i.quantity, i.unit, l.code FROM project_items pi JOIN items i ON i.id=pi.item_id JOIN locations l ON l.id=i.location_id WHERE pi.project_id=? ORDER BY i.name COLLATE NOCASE", (project_id,)).fetchall()
+    return export_rows(rows, ["Component", "Part number", "Per build", "Consumed", "On hand", "Unit", "Location"], f"{project['title']}-bom", format, f"Bill of materials · {project['title']}")
 
 @app.route("/reports")
 def reports():
@@ -659,7 +775,7 @@ def export_catalogue():
 @app.route("/settings/webhooks", methods=["POST"])
 def add_webhook():
     event, destination_url = request.form.get("event", ""), request.form.get("destination_url", "").strip()
-    events = {"stock.in", "stock.out", "stock.returned", "stock.lost", "project.component_added"}
+    events = {"stock.in", "stock.out", "stock.returned", "stock.lost", "project.built"}
     if event not in events or not valid_webhook_url(destination_url):
         flash("Choose an event and enter a valid http(s) destination URL.", "error")
     else:

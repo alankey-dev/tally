@@ -86,6 +86,7 @@
           <strong>{{project['title']}}</strong>
           <small>{{project['description'] or 'No description yet.'}}</small>
         </div>
+        {% if project['id'] in buildable %}<span class="badge {{'danger' if buildable[project['id']] == 0 else 'neutral'}}">{{buildable[project['id']]}} {{'build' if buildable[project['id']] == 1 else 'builds'}}</span>{% endif %}
       </a>
       {% endfor %}
     </div>

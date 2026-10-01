@@ -400,6 +400,10 @@ a.metric:hover { background: var(--surface-2); text-decoration: none; }
 .inline-qty { display: flex; align-items: center; gap: 8px; grid-column: 1; margin: 8px 0 0; }
 .inline-qty input { width: 76px; min-height: 34px; margin: 0; padding: 5px 9px; }
 .project-search-results .button { grid-column: 2; margin-top: 8px; }
+.build-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.build-form .inline-qty, td .inline-qty { margin: 0; }
+td .inline-qty { justify-content: flex-end; }
+.build-foot { margin-top: 24px; }
 
 /* ---------- Reports and settings ---------- */
 .report-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; width: min(100%, 720px); }
