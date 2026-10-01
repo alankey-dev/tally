@@ -18,13 +18,15 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from app.matching import ranked, suggested_homes
-from app.catalogue import FAMILIES, catalogue_item, classify, common_suggestions
+from app.catalogue import FAMILIES, classify, common_suggestions, parse_catalogue
 
 DB_PATH = Path(os.environ.get("STORAGE_DB", "data/storage.db"))
 UPLOAD_DIR = Path(os.environ.get("STORAGE_UPLOADS", "data/uploads"))
 # Locations to create on first run: a bundled layout name (see app/layouts) or a path to a JSON file.
 LAYOUT = os.environ.get("TALLY_LAYOUT", "")
 LAYOUT_DIR = Path(__file__).parent / "layouts"
+DEFAULT_CATALOGUE = Path(__file__).parent / "catalogue.json"
+MAX_CATALOGUE_BYTES = 5 * 1024 * 1024
 
 def secret_key():
     """Use SECRET_KEY when set; otherwise generate one beside the database and keep it."""
@@ -72,6 +74,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS project_items (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, item_id INTEGER NOT NULL REFERENCES items(id), quantity REAL NOT NULL, PRIMARY KEY(project_id, item_id));
     CREATE TABLE IF NOT EXISTS webhooks (id INTEGER PRIMARY KEY, event TEXT NOT NULL, destination_url TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, family TEXT NOT NULL DEFAULT 'generic', manufacturer TEXT DEFAULT '', part_number TEXT DEFAULT '', attributes TEXT NOT NULL DEFAULT '{}');
     """)
     item_columns = {row["name"] for row in conn.execute("PRAGMA table_info(items)")}
     if "family" not in item_columns:
@@ -90,6 +93,9 @@ def init_db():
     elif LAYOUT and not conn.execute("SELECT 1 FROM settings WHERE key='layout.groups'").fetchone():
         # Storage created before layouts existed: keep it, but take the layout's names and hints.
         seed_layout(conn, load_layout(LAYOUT), existing=True)
+    if not conn.execute("SELECT 1 FROM settings WHERE key='catalogue.seeded'").fetchone():
+        save_catalogue(conn, parse_catalogue(DEFAULT_CATALOGUE.read_bytes()))
+        conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES ('catalogue.seeded', '1')")
     conn.commit()
 
 def load_layout(name):
@@ -110,6 +116,36 @@ def seed_layout(conn, layout, existing=False):
         )
     for key in ("groups", "family_homes"):
         conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)", (f"layout.{key}", json.dumps(layout.get(key, {}))))
+
+def save_catalogue(conn, entries, replace=False):
+    """Add or update catalogue entries by name, keeping the ids that quick add links to."""
+    if replace:
+        conn.execute("DELETE FROM catalogue")
+    conn.executemany(
+        """INSERT INTO catalogue(name, family, manufacturer, part_number, attributes) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(name) DO UPDATE SET family=excluded.family, manufacturer=excluded.manufacturer, part_number=excluded.part_number, attributes=excluded.attributes""",
+        [(entry["name"], entry["family"], entry["manufacturer"], entry["part_number"], json.dumps(entry["attributes"], ensure_ascii=False)) for entry in entries],
+    )
+
+def catalogue_entries():
+    rows = db().execute("SELECT * FROM catalogue ORDER BY name COLLATE NOCASE")
+    return [{**dict(row), "attributes": json.loads(row["attributes"])} for row in rows]
+
+def catalogue_item(entry_id):
+    row = db().execute("SELECT * FROM catalogue WHERE id=?", (entry_id,)).fetchone() if str(entry_id or "").isdigit() else None
+    return {**dict(row), "attributes": json.loads(row["attributes"])} if row else None
+
+def fetch_catalogue(url):
+    if not valid_webhook_url(url):
+        raise ValueError("Enter a valid http(s) catalogue URL.")
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Tally/1.0"}), timeout=10) as response:
+            raw = response.read(MAX_CATALOGUE_BYTES + 1)
+    except (OSError, ValueError) as error:
+        raise ValueError(f"Could not download the catalogue: {error}") from error
+    if len(raw) > MAX_CATALOGUE_BYTES:
+        raise ValueError("The catalogue is larger than 5 MB.")
+    return parse_catalogue(raw)
 
 def layout_setting(key):
     row = db().execute("SELECT value FROM settings WHERE key=?", (f"layout.{key}",)).fetchone()
@@ -326,7 +362,7 @@ def quick_add():
             flash(f"Added {quantity:g} {selected['unit']} · {selected['name']} · {selected['code']}" if inserted else "This addition was already saved.", "success")
             return redirect(url_for("quick_add", q=query))
     matches = find_stock(query)[:8] if len(query) >= 2 else []
-    catalogue = common_suggestions(query) if len(query) >= 2 else []
+    catalogue = common_suggestions(query, catalogue_entries()) if len(query) >= 2 else []
     locations = db().execute("SELECT * FROM locations ORDER BY code").fetchall()
     homes = suggested_homes(query, locations) if len(query) >= 2 else []
     context = dict(query=query, matches=matches, homes=homes, catalogue=catalogue, selected=selected, token=str(uuid.uuid4()))
@@ -337,7 +373,7 @@ def item_guide():
     query = request.args.get("q", "").strip()[:200]
     family_key = classify(query)
     family = FAMILIES[family_key]
-    return jsonify(family=family_key, label=family["label"], home=layout_setting("family_homes").get(family_key, ""), fields=family["fields"], suggestions=common_suggestions(query))
+    return jsonify(family=family_key, label=family["label"], home=layout_setting("family_homes").get(family_key, ""), fields=family["fields"], suggestions=common_suggestions(query, catalogue_entries()))
 
 @app.route("/api/version")
 def version():
@@ -583,7 +619,42 @@ def export_rows(rows, columns, filename, format, title):
 def settings():
     flags = {flag: enabled(flag) for flag in ("images", "add_components", "edit_components", "exports")}
     webhooks = db().execute("SELECT * FROM webhooks ORDER BY event, id").fetchall()
-    return render_template("settings.html", webhooks=webhooks, flags=flags, auth_enabled=auth_enabled())
+    catalogue_count = db().execute("SELECT COUNT(*) FROM catalogue").fetchone()[0]
+    source = db().execute("SELECT value FROM settings WHERE key='catalogue.url'").fetchone()
+    return render_template("settings.html", webhooks=webhooks, flags=flags, auth_enabled=auth_enabled(), catalogue_count=catalogue_count, catalogue_url=source["value"] if source else "")
+
+@app.route("/settings/catalogue", methods=["POST"])
+def import_catalogue():
+    """Load quick-add suggestions from an uploaded file or a URL, which is remembered for refreshing."""
+    upload = request.files.get("file")
+    url = request.form.get("url", "").strip()
+    try:
+        if upload and upload.filename:
+            raw = upload.read(MAX_CATALOGUE_BYTES + 1)
+            if len(raw) > MAX_CATALOGUE_BYTES:
+                raise ValueError("The catalogue is larger than 5 MB.")
+            entries = parse_catalogue(raw)
+        elif url:
+            entries = fetch_catalogue(url)
+        else:
+            raise ValueError("Choose a catalogue file or enter a URL.")
+    except ValueError as error:
+        flash(str(error), "error")
+        return redirect(url_for("settings"))
+    conn = db()
+    with conn:
+        save_catalogue(conn, entries, replace=bool(request.form.get("replace")))
+        if url and not (upload and upload.filename):
+            conn.execute("INSERT INTO settings(key, value) VALUES ('catalogue.url', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (url,))
+    flash(f"Catalogue updated with {len(entries)} item{'s' if len(entries) != 1 else ''}.", "success")
+    return redirect(url_for("settings"))
+
+@app.route("/settings/catalogue.json")
+def export_catalogue():
+    items = [{key: entry[key] for key in ("name", "family", "manufacturer", "part_number", "attributes")} for entry in catalogue_entries()]
+    response = jsonify(items=items)
+    response.headers["Content-Disposition"] = "attachment; filename=tally-catalogue.json"
+    return response
 
 @app.route("/settings/webhooks", methods=["POST"])
 def add_webhook():

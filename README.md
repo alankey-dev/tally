@@ -10,7 +10,7 @@ Tally is a self-hosted inventory for an electronics workshop. One container, one
 
 ## Features
 
-- **Quick add.** Type what arrived, pick the matching variant, enter a count. Fuzzy matching forgives typos and spacing.
+- **Quick add.** Type what arrived, pick the matching variant, enter a count. Fuzzy matching forgives typos and spacing. Known parts come prefilled from a catalogue you can import from a file or URL in Settings.
 - **Stock checkout.** Build a list, then record use, receipt, return, or loss in one action.
 - **Permanent homes.** Every part has a coded drawer or box. Search by name, part number, or location code.
 - **Low stock.** Set a minimum and the dashboard flags it.

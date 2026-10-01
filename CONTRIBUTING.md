@@ -22,3 +22,9 @@ Styles live in `static/app.css`. Tailwind only supplies the reset; `npm run buil
 ## Sharing a storage layout
 
 Layouts are JSON files in `app/layouts/`. Each location needs a `code` and a `label`, and can also have a `kind` and search `keywords`. `groups` names the code prefixes, and `family_homes` maps a component family to the location where new parts of that family go by default. See `example.json`.
+
+## Sharing a parts catalogue
+
+Quick add suggests known parts from a catalogue kept in the database. It starts from `app/catalogue.json`; replace or extend it under **Settings → Quick add catalogue** by uploading a file or entering a URL (the URL is remembered, so one click refreshes it). Entries are matched by name, so re-importing updates them.
+
+A JSON catalogue is a list of items, or an object with an `items` list. Each item needs a `name` and can have a `family` (one of the component families in `app/catalogue.py`, otherwise `generic`), `manufacturer`, `part_number` and an `attributes` object keyed by that family's field names. A CSV catalogue needs a `name` column; `family`, `manufacturer` and `part_number` are optional, and every other column becomes an attribute. **Download catalogue** exports the current catalogue in the JSON format.

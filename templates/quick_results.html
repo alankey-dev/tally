@@ -19,10 +19,10 @@
 {% if catalogue %}
 <section class="quick-section">
   <h2>Common devices</h2>
-  <p>Known boards with their details prefilled.</p>
+  <p>Known parts with their details prefilled.</p>
   <div class="quick-matches">
     {% for item in catalogue %}
-    <a class="quick-match" href="{{url_for('new_item', catalogue=item['catalogue_id'])}}">
+    <a class="quick-match" href="{{url_for('new_item', catalogue=item['id'])}}">
       <strong>{{item['name']}}</strong>
       <span>{{item['manufacturer']}} · {{item['part_number']}}</span>
       <span class="cta">Use these details</span>

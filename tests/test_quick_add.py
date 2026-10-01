@@ -1,7 +1,9 @@
+import io
 import re
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import app.main as main
@@ -67,10 +69,33 @@ class QuickAddTests(unittest.TestCase):
         self.assertTrue(any("XIAO ESP32" in item["name"] for item in esp32["suggestions"]))
 
     def test_catalogue_suggestion_prefills_new_item(self):
-        html = self.client.get("/items/new", query_string={"catalogue": "0"}).get_data(as_text=True)
+        html = self.client.get("/quick-add?q=xiao%20esp32%20c3").get_data(as_text=True)
+        catalogue_id = re.search(r'catalogue=(\d+)">\s*<strong>Seeed Studio XIAO ESP32-C3<', html)[1]
+        html = self.client.get("/items/new", query_string={"catalogue": catalogue_id}).get_data(as_text=True)
         self.assertIn('value="Seeed Studio XIAO ESP32-C3"', html)
         self.assertIn('value="ESP32-C3"', html)
         self.assertIn(f'value="{self.location}" data-code="4L 01" selected', html)
+
+    def test_catalogue_imports_from_file_and_url(self):
+        csv_file = (io.BytesIO(b"name,family,manufacturer,part_number,model,interface\nBME280 breakout,sensor,Bosch,BME280,BME280,I2C\n"), "parts.csv")
+        response = self.client.post("/settings/catalogue", data={"file": csv_file}, content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 302)
+        suggestions = self.client.get("/api/item-guide", query_string={"q": "bme280"}).json["suggestions"]
+        self.assertEqual(suggestions[0]["attributes"], {"model": "BME280", "interface": "I2C"})
+        self.assertTrue(self.client.get("/api/item-guide", query_string={"q": "ESP32"}).json["suggestions"])
+
+        payload = json.dumps({"items": [{"name": "bme280 BREAKOUT", "family": "sensor", "part_number": "BME280-B"}, {"name": "Unknown thing", "family": "spaceship"}]}).encode()
+        with mock.patch("urllib.request.urlopen", return_value=io.BytesIO(payload)) as urlopen:
+            self.client.post("/settings/catalogue", data={"url": "https://example.com/parts.json", "replace": "on"})
+        self.assertEqual(urlopen.call_args[0][0].full_url, "https://example.com/parts.json")
+        exported = self.client.get("/settings/catalogue.json").json["items"]
+        self.assertEqual([(item["name"], item["family"], item["part_number"]) for item in exported], [("bme280 BREAKOUT", "sensor", "BME280-B"), ("Unknown thing", "generic", "")])
+        self.assertIn('value="https://example.com/parts.json"', self.client.get("/settings").get_data(as_text=True))
+
+        for bad in (b"[{\"family\": \"sensor\"}]", b"not,a,catalogue\n1,2,3", b"\xff\xfe"):
+            response = self.client.post("/settings/catalogue", data={"file": (io.BytesIO(bad), "bad.json")}, content_type="multipart/form-data", follow_redirects=True)
+            self.assertIn(b'class="flash error', response.data)
+        self.assertEqual(len(self.client.get("/settings/catalogue.json").json["items"]), 2)
 
     def test_adaptive_attributes_are_saved_and_displayed(self):
         response = self.client.post("/items/new", data={
