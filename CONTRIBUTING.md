@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping. Bug reports, small fixes and new storage layouts are all welcome. For bigger changes, open an issue first so we can agree on the approach.
+Thanks for helping. Bug reports, small fixes and new storage layouts are all welcome. For bigger changes, open an issue first so we can agree on the approach. Researched proposals for the next features live in [`docs/specs`](docs/specs/README.md); pick one up the same way.
 
 ## Setup
 
