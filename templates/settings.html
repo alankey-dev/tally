@@ -50,6 +50,25 @@
     </div>
 
     <div class="card">
+      <h2>Part search providers</h2>
+      <p class="copy">Quick add can look up parts that are not in your catalogue. Switch on the providers you want to search.</p>
+      {% for id, provider in providers.items() %}
+      <form method="post" action="{{url_for('update_provider', provider_id=id)}}" class="password-form">
+        <h3>{{provider['name']}}</h3>
+        <p class="copy">{{provider['description']}}</p>
+        {% for key, label, secret in provider['fields'] %}
+        <label>{{label}}<input name="{{key}}" type="{{'password' if secret else 'text'}}" autocomplete="off" placeholder="{{'Saved. Leave blank to keep it' if secret and provider_configs[id][key] else ''}}"></label>
+        {% if secret and provider_configs[id][key] %}<label class="check"><input name="clear_{{key}}" type="checkbox"> Remove the saved {{label|lower}}</label>{% endif %}
+        {% endfor %}
+        <label class="check"><input name="enabled" type="checkbox"{% if provider_configs[id]['enabled'] %} checked{% endif %}> Search {{provider['name']}}</label>
+        {% if provider_configs[id]['enabled'] and not is_configured(id, provider_configs[id]) %}<p class="copy">Add the details above before this provider is searched.</p>{% endif %}
+        <button class="button primary">Save {{provider['name']}}</button>
+      </form>
+      {% if not loop.last %}<hr>{% endif %}
+      {% endfor %}
+    </div>
+
+    <div class="card">
       <h2>Appearance</h2>
       <p class="copy">Your choice is stored on this device only.</p>
       <div class="theme-options" role="group" aria-label="Theme">

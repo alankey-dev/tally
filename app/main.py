@@ -17,6 +17,7 @@ from flask import Flask, abort, flash, g, jsonify, redirect, render_template, re
 from werkzeug.security import check_password_hash, generate_password_hash
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from app import providers as part_providers
 from app.matching import ranked, suggested_homes
 from app.catalogue import FAMILIES, classify, common_suggestions, parse_catalogue
 
@@ -230,6 +231,17 @@ def access_token(password_hash):
 def set_setting(key, value):
     db().execute("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
 
+def provider_configs():
+    """Each provider's saved settings, with `enabled` falling back to the provider's default."""
+    stored = {row["key"]: row["value"] for row in db().execute("SELECT key, value FROM settings WHERE key LIKE 'provider.%'")}
+    configs = {}
+    for provider_id, provider in part_providers.PROVIDERS.items():
+        config = {key: stored.get(f"provider.{provider_id}.{key}", "") for key, _label, _secret in provider["fields"]}
+        flag = stored.get(f"provider.{provider_id}.enabled")
+        config["enabled"] = provider["default_enabled"] if flag is None else flag == "1"
+        configs[provider_id] = config
+    return configs
+
 @app.route("/access", methods=["GET", "POST"])
 def access():
     password = db().execute("SELECT value FROM settings WHERE key='access.password_hash'").fetchone()
@@ -386,7 +398,17 @@ def quick_add():
     catalogue = common_suggestions(query, catalogue_entries()) if len(query) >= 2 else []
     locations = db().execute("SELECT * FROM locations ORDER BY code").fetchall()
     homes = suggested_homes(query, locations) if len(query) >= 2 else []
-    context = dict(query=query, matches=matches, homes=homes, catalogue=catalogue, selected=selected, token=str(uuid.uuid4()))
+    configs = provider_configs()
+    active = [pid for pid, config in configs.items() if config["enabled"] and part_providers.is_configured(pid, config)]
+    provider_results = provider_errors = None
+    if request.args.get("providers") and len(query) >= 2 and active:
+        provider_results, provider_errors = part_providers.search_all(query, configs)
+        for results in provider_results.values():
+            for entry in results:
+                entry["link"] = url_for("new_item", name=entry["name"], family=entry["family"], manufacturer=entry["manufacturer"], part_number=entry["part_number"],
+                                        **{f"attr_{key}": value for key, value in entry["attributes"].items()})
+    context = dict(query=query, matches=matches, homes=homes, catalogue=catalogue, selected=selected, token=str(uuid.uuid4()),
+                   providers=part_providers.PROVIDERS, active_providers=active, provider_results=provider_results, provider_errors=provider_errors)
     return render_template("quick_results.html" if request.args.get("fragment") else "quick_add.html", **context)
 
 @app.route("/api/item-guide")
@@ -422,7 +444,10 @@ def new_item():
         home = layout_setting("family_homes").get(selected_family)
         row = next((location for location in locations if location["code"] == home), None)
         suggested_location = str(row["id"]) if row else ""
-    initial = suggestion or {"name": suggested_name, "manufacturer": "", "part_number": "", "attributes": {}}
+    initial = suggestion or {
+        "name": suggested_name, "manufacturer": request.args.get("manufacturer", "")[:200], "part_number": request.args.get("part_number", "")[:200],
+        "attributes": {key.removeprefix("attr_")[:64]: value[:200] for key, value in request.args.items() if key.startswith("attr_")},
+    }
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         error = None
@@ -767,7 +792,7 @@ def settings():
     webhooks = db().execute("SELECT * FROM webhooks ORDER BY event, id").fetchall()
     catalogue_count = db().execute("SELECT COUNT(*) FROM catalogue").fetchone()[0]
     source = db().execute("SELECT value FROM settings WHERE key='catalogue.url'").fetchone()
-    return render_template("settings.html", webhooks=webhooks, flags=flags, auth_enabled=auth_enabled(), catalogue_count=catalogue_count, catalogue_url=source["value"] if source else "")
+    return render_template("settings.html", webhooks=webhooks, flags=flags, auth_enabled=auth_enabled(), catalogue_count=catalogue_count, catalogue_url=source["value"] if source else "", providers=part_providers.PROVIDERS, provider_configs=provider_configs(), is_configured=part_providers.is_configured)
 
 @app.route("/settings/catalogue", methods=["POST"])
 def import_catalogue():
@@ -801,6 +826,23 @@ def export_catalogue():
     response = jsonify(items=items)
     response.headers["Content-Disposition"] = "attachment; filename=tally-catalogue.json"
     return response
+
+@app.route("/settings/providers/<provider_id>", methods=["POST"])
+def update_provider(provider_id):
+    provider = part_providers.PROVIDERS.get(provider_id)
+    if provider is None:
+        abort(404)
+    conn = db()
+    with conn:
+        set_setting(f"provider.{provider_id}.enabled", "1" if request.form.get("enabled") else "0")
+        for key, _label, secret in provider["fields"]:
+            value = request.form.get(key, "").strip()[:200]
+            if value or not secret:
+                set_setting(f"provider.{provider_id}.{key}", value)
+            elif request.form.get(f"clear_{key}"):
+                set_setting(f"provider.{provider_id}.{key}", "")
+    flash(f"{provider['name']} settings saved.", "success")
+    return redirect(url_for("settings"))
 
 @app.route("/settings/webhooks", methods=["POST"])
 def add_webhook():

@@ -129,3 +129,59 @@ class QuickAddTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProviderTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.previous_path, self.previous_layout = main.DB_PATH, main.LAYOUT
+        main.DB_PATH = Path(self.directory.name) / "test.db"
+        main.LAYOUT = "example"
+        self.client = main.app.test_client()
+        self.client.get("/quick-add")
+
+    def tearDown(self):
+        main.DB_PATH, main.LAYOUT = self.previous_path, self.previous_layout
+        self.directory.cleanup()
+
+    def test_settings_list_providers_and_hide_saved_key(self):
+        html = self.client.get("/settings").get_data(as_text=True)
+        self.assertIn("JLCPCB / LCSC", html)
+        self.assertIn("Mouser", html)
+        self.client.post("/settings/providers/mouser", data=dict(enabled="1", api_key="secret-key"))
+        html = self.client.get("/settings").get_data(as_text=True)
+        self.assertNotIn("secret-key", html)
+        self.client.post("/settings/providers/mouser", data=dict(enabled="1", api_key=""))
+        with main.app.app_context():
+            self.assertEqual(main.provider_configs()["mouser"]["api_key"], "secret-key")
+        self.assertEqual(self.client.post("/settings/providers/nope").status_code, 404)
+
+    def test_search_uses_enabled_providers_only(self):
+        fake = [{"name": "NE555P", "family": "semiconductor", "manufacturer": "TI", "part_number": "NE555P", "description": "Timer", "url": "", "attributes": {"package": "DIP-8"}}]
+        with mock.patch.dict(main.part_providers.PROVIDERS["jlcpcb"], {"search": lambda query, config: fake}), \
+                mock.patch.dict(main.part_providers.PROVIDERS["mouser"], {"search": mock.Mock(side_effect=AssertionError)}):
+            html = self.client.get("/quick-add?q=555+timer&providers=1").get_data(as_text=True)
+            self.assertIn("NE555P", html)
+            self.assertIn("attr_package=DIP-8", html)
+            self.assertNotIn("Mouser", html.split("Search providers")[1].split("New variant")[0].replace("Mouser's", ""))
+            self.assertIn("Search providers", self.client.get("/quick-add?q=555+timer").get_data(as_text=True))
+            self.client.post("/settings/providers/jlcpcb", data={})
+            self.assertNotIn("Search providers", self.client.get("/quick-add?q=555+timer").get_data(as_text=True))
+
+    def test_provider_error_is_shown(self):
+        def fail(query, config):
+            raise main.part_providers.ProviderError("The provider could not be reached.")
+        with mock.patch.dict(main.part_providers.PROVIDERS["jlcpcb"], {"search": fail}):
+            html = self.client.get("/quick-add?q=555+timer&providers=1").get_data(as_text=True)
+        self.assertIn("could not be reached", html)
+
+    def test_new_item_prefilled_from_provider_result(self):
+        html = self.client.get("/items/new?name=NE555P&manufacturer=TI&part_number=NE555P&attr_package=DIP-8").get_data(as_text=True)
+        self.assertIn('value="TI"', html)
+        self.assertIn("DIP-8", html)
+
+    def test_mouser_parses_parts(self):
+        body = {"SearchResults": {"Parts": [{"ManufacturerPartNumber": "RC0805FR-0710KL", "Manufacturer": "YAGEO", "Description": "Thick Film Resistors 10K ohm", "Category": "Resistors", "MouserPartNumber": "603-RC0805FR-0710KL", "ProductDetailUrl": "https://www.mouser.com/x"}]}}
+        with mock.patch.object(main.part_providers, "_request", return_value=body):
+            results = main.part_providers.search_mouser("10k", {"api_key": "k"})
+        self.assertEqual((results[0]["manufacturer"], results[0]["family"], results[0]["attributes"]["mouser"]), ("YAGEO", "resistor", "603-RC0805FR-0710KL"))
