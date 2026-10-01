@@ -48,6 +48,19 @@ class SetupTests(unittest.TestCase):
         self.assertIn("SHELF 1", self.client.get("/quick-add?q=nema17 stepper").get_data(as_text=True))
         self.assertEqual(self.client.get("/api/item-guide?q=hdmi cable").json["home"], "SHELF 2")
 
+    def test_layout_applies_to_storage_created_before_layouts(self):
+        main.LAYOUT = ""
+        with main.app.app_context():
+            main.init_db()
+            main.db().execute("INSERT INTO locations(code, kind, label, created_at) VALUES ('C1 S01', 'small drawer', 'Resistors', '2026-01-01')")
+            main.db().commit()
+        main.LAYOUT = "example"
+        self.assertEqual(self.location_codes(), ["C1 S01"])
+        self.assertIn("<h2>Components</h2>", self.client.get("/locations").get_data(as_text=True))
+        self.assertEqual(self.client.get("/api/item-guide?q=resistor").json["home"], "C1 S01")
+        with main.app.app_context():
+            self.assertEqual(main.db().execute("SELECT keywords FROM locations").fetchone()[0], "resistor")
+
     def test_generated_secret_key_is_kept(self):
         previous = os.environ.pop("SECRET_KEY", None)
         try:
