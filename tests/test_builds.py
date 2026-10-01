@@ -1,5 +1,7 @@
 import json
+import sqlite3
 import tempfile
+import threading
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -78,7 +80,7 @@ class BuildPlannerTests(unittest.TestCase):
         self.assertIn("<strong>0</strong>", html)
         for invalid in ("0", "-1", "abc", "1.5", ""):
             response = self.client.post(self.page + "/build", data=dict(quantity=invalid), follow_redirects=True)
-            self.assertIn("whole number of at least 1", response.get_data(as_text=True))
+            self.assertIn("whole number from 1", response.get_data(as_text=True))
         self.assertEqual(self.stock(), [6, 1])
 
     def test_short_build_moves_nothing(self):
@@ -169,3 +171,102 @@ class BuildPlannerTests(unittest.TestCase):
         self.assertEqual(self.query("SELECT event FROM webhooks"), [("project.built",)])
         self.client.post("/settings/webhooks", data=dict(event="project.component_added", destination_url="https://example.test/hook"))
         self.assertEqual(self.query("SELECT count(*) FROM webhooks"), [(1,)])
+
+    def test_build_count_is_bounded_and_kept_across_actions(self):
+        self.add_line(1, "2")
+        for garbage in ("0", "-3", "abc", "1e3", "9" * 30):
+            self.assertIn('data-build-count>×1<', self.client.get(self.page, query_string={"quantity": garbage}).get_data(as_text=True))
+        response = self.client.post(self.page + "/build", data=dict(quantity=str(main.MAX_BUILDS + 1)), follow_redirects=True)
+        self.assertIn("whole number from 1 to 1,000,000", response.get_data(as_text=True))
+        self.assertEqual(self.stock(), [10, 7])
+        html = self.client.get(self.page, query_string={"quantity": "4"}).get_data(as_text=True)
+        self.assertIn('name="quantity" value="4"', html)
+        for path, data in ((self.page + "/lines/1", dict(per_build="3")), (self.page + "/lines/1/delete", {}), (self.page, dict(item_id=1, per_build="2"))):
+            self.assertEqual(self.client.post(path, data=dict(data, quantity="4")).headers["Location"], self.page + "?quantity=4")
+        self.assertEqual(self.client.post(self.page + "/build", data=dict(quantity="4")).headers["Location"], self.page + "?quantity=4")
+        self.assertEqual(self.client.post(self.page + "/builds/1/undo", data=dict(quantity="4")).headers["Location"], self.page + "?quantity=4")
+        self.assertEqual(self.client.post(self.page + "/lines/1", data=dict(per_build="3", quantity="1")).headers["Location"], self.page)
+
+    def test_short_plan_disables_build_and_offers_the_covered_count(self):
+        self.add_line(1, "2")
+        self.add_line(2, "3")
+        html = self.client.get(self.page, query_string={"quantity": "3"}).get_data(as_text=True)
+        self.assertIn('<button class="button primary" disabled>', html)
+        self.assertIn(f'Stock covers <a href="{self.page}?quantity=2">×2</a>', html)
+        html = self.client.get(self.page, query_string={"quantity": "2"}).get_data(as_text=True)
+        self.assertNotIn('class="button primary" disabled', html)
+        self.assertNotIn("Stock covers", html)
+
+    def test_undo_waits_for_a_concurrent_undo_and_then_returns_nothing(self):
+        self.add_line(1, "2")
+        self.client.post(self.page + "/build", data=dict(quantity="1"))
+        other = sqlite3.connect(main.DB_PATH)
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("UPDATE builds SET undone_at='2026-01-01T00:00:00+00:00' WHERE id=1 AND undone_at IS NULL")
+        results = []
+        thread = threading.Thread(target=lambda: results.append(self.client.post(self.page + "/builds/1/undo", follow_redirects=True).get_data(as_text=True)))
+        thread.start()
+        thread.join(0.5)
+        self.assertTrue(thread.is_alive())
+        other.commit()
+        other.close()
+        thread.join(10)
+        self.assertIn("already undone", results[0])
+        self.assertEqual(self.stock(), [8, 7])
+        self.assertEqual(self.query("SELECT count(*) FROM movements WHERE reason LIKE 'Unbuilt%'"), [(0,)])
+
+    def test_build_waits_for_a_concurrent_build_and_then_sees_the_shortfall(self):
+        self.add_line(1, "6")
+        other = sqlite3.connect(main.DB_PATH)
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("UPDATE items SET quantity=quantity-6 WHERE id=1")
+        results = []
+        thread = threading.Thread(target=lambda: results.append(self.client.post(self.page + "/build", data=dict(quantity="1"), follow_redirects=True).get_data(as_text=True)))
+        thread.start()
+        thread.join(0.5)
+        self.assertTrue(thread.is_alive())
+        other.commit()
+        other.close()
+        thread.join(10)
+        self.assertIn("Not enough stock to build 1", results[0])
+        self.assertEqual(self.stock(), [4, 7])
+        self.assertEqual(self.query("SELECT count(*) FROM builds"), [(0,)])
+
+    def test_undo_is_all_or_nothing(self):
+        self.add_line(1, "2")
+        self.add_line(2, "3")
+        self.client.post(self.page + "/build", data=dict(quantity="1"))
+        with mock.patch.object(main, "record_movement", side_effect=[None, sqlite3.OperationalError("disk full")]):
+            with self.assertLogs(main.app.logger, level="ERROR"):
+                self.assertEqual(self.client.post(self.page + "/builds/1/undo").status_code, 500)
+        self.assertEqual(self.stock(), [8, 4])
+        self.assertEqual(self.query("SELECT undone_at FROM builds"), [(None,)])
+
+    def test_migration_is_all_or_nothing_and_renames_legacy_webhooks(self):
+        with main.app.app_context():
+            conn = main.db()
+            conn.executescript("""
+                DROP TABLE project_items;
+                CREATE TABLE project_items (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, item_id INTEGER NOT NULL REFERENCES items(id), quantity REAL NOT NULL, PRIMARY KEY(project_id, item_id));
+                INSERT INTO project_items VALUES (1, 1, 4);
+                INSERT INTO webhooks(event, destination_url, created_at) VALUES ('project.component_added', 'https://example.test/led', '2026-01-01');
+            """)
+            with mock.patch.object(main.json, "dumps", side_effect=ValueError("boom")):
+                with self.assertRaises(ValueError):
+                    main.init_db()
+            conn.rollback()  # What closing the connection does when a request fails part-way.
+            self.assertNotIn("per_build", {row["name"] for row in conn.execute("PRAGMA table_info(project_items)")})
+            main.init_db()
+            main.init_db()
+        self.assertEqual(self.query("SELECT per_build FROM project_items"), [(4,)])
+        self.assertEqual(self.query("SELECT count(*) FROM builds"), [(1,)])
+        self.assertEqual(self.query("SELECT event FROM webhooks"), [("project.built",)])
+
+    def test_odd_quantities_do_not_break_the_pages(self):
+        self.add_line(1, "5e-324")
+        self.client.post("/items/2", data=dict(quantity_change="1e999"))
+        self.assertEqual(self.stock(), [10, 7])
+        self.add_line(2, "1")
+        for path in ("/", "/projects", self.page):
+            self.assertEqual(self.client.get(path).status_code, 200)
+        self.assertIn("<strong>0</strong>", self.client.get(self.page).get_data(as_text=True))

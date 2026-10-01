@@ -124,16 +124,26 @@
   const planner = document.querySelector('[data-build-planner]');
   if (planner) {
     const wanted = planner.querySelector('[name="quantity"]');
-    wanted.addEventListener('input', () => {
-      const count = Math.max(1, Math.floor(Number(wanted.value) || 1));
+    const build = planner.querySelector('button.primary');
+    const update = () => {
+      const typed = Number(wanted.value);
+      const count = Number.isInteger(typed) && typed >= 1 && typed <= Number(wanted.max) ? typed : 1;
+      const lines = document.querySelectorAll('[data-line]');
+      let short = false;
       document.querySelectorAll('[data-build-count]').forEach(node => node.textContent = `×${count}`);
-      document.querySelectorAll('[data-line]').forEach(row => {
+      lines.forEach(row => {
         const need = Number(row.dataset.perBuild) * count;
-        const short = need - Number(row.dataset.onHand);
+        const missing = need - Number(row.dataset.onHand);
+        if (missing > 1e-9) short = true;
         row.querySelector('[data-need]').textContent = `${formatQuantity(need)} ${row.dataset.unit}`;
-        row.querySelector('[data-status]').innerHTML = short > 1e-9 ? `<span class="badge danger">Short ${formatQuantity(short)}</span>` : '<span class="badge neutral">Covered</span>';
+        row.querySelector('[data-status]').innerHTML = missing > 1e-9 ? `<span class="badge danger">Short ${formatQuantity(missing)}</span>` : '<span class="badge neutral">Covered</span>';
       });
-    });
+      build.disabled = short || !lines.length;
+    };
+    wanted.addEventListener('input', update);
+    // Browsers restore a typed count without an input event on reload or history navigation.
+    window.addEventListener('pageshow', update);
+    update();
   }
 
   const menuToggle = document.querySelector('[data-menu-toggle]');

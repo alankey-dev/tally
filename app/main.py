@@ -89,18 +89,26 @@ def init_db():
         conn.execute("ALTER TABLE locations ADD COLUMN image_path TEXT DEFAULT ''")
     if "keywords" not in location_columns:
         conn.execute("ALTER TABLE locations ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
-    project_columns = {row["name"] for row in conn.execute("PRAGMA table_info(project_items)")}
-    if "per_build" not in project_columns:
+    def project_columns():
+        return {row["name"] for row in conn.execute("PRAGMA table_info(project_items)")}
+    if "per_build" not in project_columns():
         # A line's quantity is the stock it has consumed; per_build is what one build needs. Lines allocated
         # before build planning were taken from stock on the spot, so keep them as consumed, take them as the
-        # recipe for one build, and log that build so it can be undone like any other.
-        conn.execute("ALTER TABLE project_items ADD COLUMN per_build REAL NOT NULL DEFAULT 0")
-        conn.execute("UPDATE project_items SET per_build=quantity")
-        lines = {}
-        for row in conn.execute("SELECT project_id, item_id, quantity FROM project_items ORDER BY project_id, item_id"):
-            lines.setdefault(row["project_id"], []).append([row["item_id"], row["quantity"]])
-        now = datetime.now(timezone.utc).isoformat()
-        conn.executemany("INSERT INTO builds(project_id, quantity, lines, built_at) VALUES (?, 1, ?, ?)", [(project_id, json.dumps(rows), now) for project_id, rows in lines.items()])
+        # recipe for one build, and log that build so it can be undone like any other. One write transaction
+        # makes it all or nothing, and a second worker waits on the lock and then finds the column in place.
+        conn.execute("BEGIN IMMEDIATE")
+        if "per_build" not in project_columns():
+            conn.execute("ALTER TABLE project_items ADD COLUMN per_build REAL NOT NULL DEFAULT 0")
+            conn.execute("UPDATE project_items SET per_build=quantity")
+            lines = {}
+            for row in conn.execute("SELECT project_id, item_id, quantity FROM project_items ORDER BY project_id, item_id"):
+                lines.setdefault(row["project_id"], []).append([row["item_id"], row["quantity"]])
+            now = datetime.now(timezone.utc).isoformat()
+            conn.executemany("INSERT INTO builds(project_id, quantity, lines, built_at) VALUES (?, 1, ?, ?)", [(project_id, json.dumps(rows), now) for project_id, rows in lines.items()])
+        conn.commit()
+    if conn.execute("SELECT 1 FROM webhooks WHERE event='project.component_added' LIMIT 1").fetchone():
+        # Adding a line no longer moves stock, so destinations for the old project event now get the build instead.
+        conn.execute("UPDATE webhooks SET event='project.built' WHERE event='project.component_added'")
     if LAYOUT and conn.execute("SELECT COUNT(*) FROM locations").fetchone()[0] == 0:
         seed_layout(conn, load_layout(LAYOUT))
     elif LAYOUT and not conn.execute("SELECT 1 FROM settings WHERE key='layout.groups'").fetchone():
@@ -471,7 +479,7 @@ def item_detail(item_id):
     if not item: abort(404)
     if request.method == "POST":
         change = float(request.form.get("quantity_change") or 0)
-        if change == 0: flash("Enter a non-zero stock change.", "error")
+        if change == 0 or not math.isfinite(change): flash("Enter a non-zero stock change.", "error")
         else:
             reason = request.form.get("reason", "Stock adjustment").strip() or "Stock adjustment"
             record_movement(conn, item, change, reason, "stock.in" if change > 0 else "stock.out")
@@ -547,6 +555,17 @@ def projects():
 
 # Quantities are floats, so a line that is exactly covered can come out a hair short; ignore differences this small.
 TOLERANCE = 1e-9
+MAX_BUILDS = 1_000_000
+
+def builds_wanted(values):
+    """The number of builds being planned, from the query string or a form, or None when it is not a usable count."""
+    wanted = values.get("quantity", type=int)
+    return wanted if wanted and 1 <= wanted <= MAX_BUILDS else None
+
+def back_to_project(project_id):
+    """Return to the project page without losing the number of builds being planned."""
+    wanted = builds_wanted(request.form)
+    return redirect(url_for("project_detail", project_id=project_id, quantity=wanted if wanted and wanted > 1 else None))
 
 def project_plan(conn, project_id, wanted=1):
     """Each bill-of-materials line with what `wanted` builds need, what is on hand, and the shortfall."""
@@ -562,7 +581,11 @@ def project_plan(conn, project_id, wanted=1):
 
 def buildable(lines):
     """How many complete builds the stock on hand covers: the tightest line decides, and no lines means none."""
-    return max(0, min((math.floor(line["on_hand"] / line["per_build"] + TOLERANCE) for line in lines if line["per_build"] > 0), default=0))
+    counts = []
+    for line in lines:
+        ratio = line["on_hand"] / line["per_build"] if line["per_build"] > 0 else 0
+        counts.append(math.floor(ratio + TOLERANCE) if math.isfinite(ratio) else 0)
+    return max(0, min(counts, default=0))
 
 def project_build_counts(conn):
     """Builds possible for every project that has a bill of materials, keyed by project id."""
@@ -589,8 +612,8 @@ def project_detail(project_id):
             conn.execute("INSERT INTO project_items(project_id, item_id, quantity, per_build) VALUES (?, ?, 0, ?) ON CONFLICT(project_id, item_id) DO UPDATE SET per_build=excluded.per_build", (project_id, item_id, per_build))
             conn.commit()
             flash("Line added. Stock is only taken when you build.", "success")
-        return redirect(url_for("project_detail", project_id=project_id))
-    wanted = max(1, request.args.get("quantity", 1, type=int) or 1)
+        return back_to_project(project_id)
+    wanted = builds_wanted(request.args) or 1
     plan = project_plan(conn, project_id, wanted)
     builds = conn.execute("SELECT * FROM builds WHERE project_id=? ORDER BY built_at DESC, id DESC", (project_id,)).fetchall()
     query = request.args.get("q", "").strip()
@@ -600,7 +623,7 @@ def project_detail(project_id):
         component_sql += " WHERE i.name LIKE ? OR i.part_number LIKE ?"
         args = [f"%{query}%"] * 2
     component_sql += " ORDER BY i.name COLLATE NOCASE LIMIT 30"
-    return render_template("project_detail.html", project=project, plan=plan, wanted=wanted, buildable=buildable(plan), builds=builds, components=conn.execute(component_sql, args).fetchall(), query=query)
+    return render_template("project_detail.html", project=project, plan=plan, wanted=wanted, max_builds=MAX_BUILDS, buildable=buildable(plan), builds=builds, components=conn.execute(component_sql, args).fetchall(), query=query)
 
 @app.route("/projects/<int:project_id>/lines/<int:item_id>", methods=["POST"])
 def update_project_line(project_id, item_id):
@@ -617,7 +640,7 @@ def update_project_line(project_id, item_id):
         conn.execute("UPDATE project_items SET per_build=? WHERE project_id=? AND item_id=?", (per_build, project_id, item_id))
         conn.commit()
         flash("Line updated.", "success")
-    return redirect(url_for("project_detail", project_id=project_id))
+    return back_to_project(project_id)
 
 @app.route("/projects/<int:project_id>/lines/<int:item_id>/delete", methods=["POST"])
 def delete_project_line(project_id, item_id):
@@ -626,7 +649,7 @@ def delete_project_line(project_id, item_id):
         abort(404)
     conn.commit()
     flash("Line removed. Stock it has already used stays in the history.", "success")
-    return redirect(url_for("project_detail", project_id=project_id))
+    return back_to_project(project_id)
 
 @app.route("/projects/<int:project_id>/build", methods=["POST"])
 def build_project(project_id):
@@ -635,50 +658,57 @@ def build_project(project_id):
     project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
     if not project:
         abort(404)
-    wanted = request.form.get("quantity", type=int)
-    plan = project_plan(conn, project_id, wanted) if wanted and wanted > 0 else []
-    short = [line for line in plan if line["short"] > 0]
-    if not wanted or wanted < 1:
-        flash("Enter how many to build: a whole number of at least 1.", "error")
-    elif not plan:
+    wanted = builds_wanted(request.form)
+    if not wanted:
+        flash(f"Enter how many to build: a whole number from 1 to {MAX_BUILDS:,}.", "error")
+        return back_to_project(project_id)
+    reference = {"id": project_id, "title": project["title"]}
+    with conn:
+        # Hold the write lock from the stock check to the deductions, so two overlapping builds cannot both pass it.
+        conn.execute("BEGIN IMMEDIATE")
+        plan = project_plan(conn, project_id, wanted)
+        short = [line for line in plan if line["short"] > 0]
+        if plan and not short:
+            for line in plan:
+                record_movement(conn, line, -line["need"], f"Built {project['title']} ×{wanted}", "stock.out", reference)
+                conn.execute("UPDATE project_items SET quantity=quantity+? WHERE project_id=? AND item_id=?", (line["need"], project_id, line["id"]))
+            build_id = conn.execute("INSERT INTO builds(project_id, quantity, lines, built_at) VALUES (?, ?, ?, ?)", (project_id, wanted, json.dumps([[line["id"], line["need"]] for line in plan]), datetime.now(timezone.utc).isoformat())).lastrowid
+    if not plan:
         flash("Add at least one line to the bill of materials first.", "error")
     elif short:
         detail = "; ".join(f"{line['name']} needs {format_quantity(line['need'])} {line['unit']}, {format_quantity(line['on_hand'])} on hand" for line in short[:3])
         more = f" and {len(short) - 3} more" if len(short) > 3 else ""
         flash(f"Not enough stock to build {wanted}: {detail}{more}.", "error")
     else:
-        reference = {"id": project_id, "title": project["title"]}
-        with conn:
-            for line in plan:
-                record_movement(conn, line, -line["need"], f"Built {project['title']} ×{wanted}", "stock.out", reference)
-                conn.execute("UPDATE project_items SET quantity=quantity+? WHERE project_id=? AND item_id=?", (line["need"], project_id, line["id"]))
-            build_id = conn.execute("INSERT INTO builds(project_id, quantity, lines, built_at) VALUES (?, ?, ?, ?)", (project_id, wanted, json.dumps([[line["id"], line["need"]] for line in plan]), datetime.now(timezone.utc).isoformat())).lastrowid
         dispatch_webhooks("project.built", {"project": reference, "build_id": build_id, "quantity": wanted, "lines": [{"item": {"id": line["id"], "name": line["name"], "part_number": line["part_number"], "location": line["code"]}, "quantity_change": -line["need"], "unit": line["unit"]} for line in plan]})
         flash(f"Built {project['title']} ×{wanted}: {len(plan)} line{'s' if len(plan) != 1 else ''} taken from stock.", "success")
-    return redirect(url_for("project_detail", project_id=project_id))
+    return back_to_project(project_id)
 
 @app.route("/projects/<int:project_id>/builds/<int:build_id>/undo", methods=["POST"])
 def undo_build(project_id, build_id):
     """Return exactly what a build took, even if the bill of materials has changed since."""
     conn = db()
-    build = conn.execute("SELECT b.*, p.title FROM builds b JOIN projects p ON p.id=b.project_id WHERE b.id=? AND b.project_id=?", (build_id, project_id)).fetchone()
-    if not build:
-        abort(404)
-    if build["undone_at"]:
-        flash("That build was already undone.", "error")
-        return redirect(url_for("project_detail", project_id=project_id))
-    lines = json.loads(build["lines"])
-    reason = f"Unbuilt {build['title']} ×{build['quantity']}"
     with conn:
-        for item_id, quantity in lines:
-            item = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.id=?", (item_id,)).fetchone()
-            if item is None:
-                continue
-            record_movement(conn, item, quantity, reason, "stock.returned", {"id": project_id, "title": build["title"]})
-            conn.execute("UPDATE project_items SET quantity=max(quantity-?, 0) WHERE project_id=? AND item_id=?", (quantity, project_id, item_id))
-        conn.execute("UPDATE builds SET undone_at=? WHERE id=?", (datetime.now(timezone.utc).isoformat(), build_id))
-    flash(f"Build undone: {len(lines)} line{'s' if len(lines) != 1 else ''} returned to stock.", "success")
-    return redirect(url_for("project_detail", project_id=project_id))
+        # Take the write lock first and make marking the build undone the guard, so a second tap waits and then finds nothing to return.
+        conn.execute("BEGIN IMMEDIATE")
+        build = conn.execute("SELECT b.*, p.title FROM builds b JOIN projects p ON p.id=b.project_id WHERE b.id=? AND b.project_id=?", (build_id, project_id)).fetchone()
+        if not build:
+            abort(404)
+        lines = json.loads(build["lines"])
+        undone = conn.execute("UPDATE builds SET undone_at=? WHERE id=? AND undone_at IS NULL", (datetime.now(timezone.utc).isoformat(), build_id)).rowcount
+        if undone:
+            reason = f"Unbuilt {build['title']} ×{build['quantity']}"
+            for item_id, quantity in lines:
+                item = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.id=?", (item_id,)).fetchone()
+                if item is None:
+                    continue
+                record_movement(conn, item, quantity, reason, "stock.returned", {"id": project_id, "title": build["title"]})
+                conn.execute("UPDATE project_items SET quantity=max(quantity-?, 0) WHERE project_id=? AND item_id=?", (quantity, project_id, item_id))
+    if undone:
+        flash(f"Build undone: {len(lines)} line{'s' if len(lines) != 1 else ''} returned to stock.", "success")
+    else:
+        flash("That build was already undone.", "error")
+    return back_to_project(project_id)
 
 @app.route("/projects/<int:project_id>/bom.<format>")
 def export_bom(project_id, format):
