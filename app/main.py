@@ -17,6 +17,7 @@ from flask import Flask, abort, flash, g, jsonify, redirect, render_template, re
 from werkzeug.security import check_password_hash, generate_password_hash
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from app.webhooks import init_outbox, enqueue_event, start_worker
 from app.matching import ranked, suggested_homes
 from app.catalogue import FAMILIES, classify, common_suggestions, parse_catalogue
 
@@ -65,6 +66,7 @@ def close_db(_error):
 
 def init_db():
     conn = db()
+    init_outbox(conn)
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS locations (id INTEGER PRIMARY KEY, code TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, label TEXT NOT NULL, notes TEXT DEFAULT '', image_path TEXT DEFAULT '', created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, manufacturer TEXT DEFAULT '', part_number TEXT DEFAULT '', quantity REAL NOT NULL DEFAULT 0, unit TEXT NOT NULL DEFAULT 'pcs', minimum_quantity REAL, location_id INTEGER NOT NULL REFERENCES locations(id), notes TEXT DEFAULT '', image_path TEXT DEFAULT '', updated_at TEXT NOT NULL);
@@ -175,6 +177,8 @@ def layout_setting(key):
 @app.before_request
 def ensure_database():
     init_db()
+    if app.config.get("WEBHOOK_WORKER_ENABLED", True):
+        start_worker(DB_PATH, app.logger)
     password = db().execute("SELECT value FROM settings WHERE key='access.password_hash'").fetchone()
     public_endpoints = {"access", "logout", "static"}
     if auth_enabled() and request.endpoint not in public_endpoints and (not password or session.get("access_unlocked") != access_token(password["value"])):
@@ -238,6 +242,7 @@ def access():
     if request.method == "POST":
         if check_password_hash(password["value"], request.form.get("password", "")):
             session["access_unlocked"] = access_token(password["value"])
+            dispatch_webhooks("access.unlocked", {})
             target = request.args.get("next", "")
             return redirect(target if target.startswith("/") and not target.startswith("//") else url_for("dashboard"))
         flash("That password is not correct.", "error")
@@ -246,21 +251,49 @@ def access():
 @app.route("/logout", methods=["POST"])
 def logout():
     session.pop("access_unlocked", None)
+    dispatch_webhooks("access.locked", {})
     flash("Signed out.", "success")
     return redirect(url_for("access"))
 
+WEBHOOK_EVENTS = {
+    "stock.in": "Stock in", "stock.out": "Stock out", "stock.returned": "Stock returned",
+    "stock.lost": "Stock lost / damaged", "item.created": "Item created",
+    "item.found": "Item located", "item.viewed": "Item opened",
+    "location.created": "Storage location created", "project.created": "Project created",
+    "project.line_added": "Project line added", "project.line_updated": "Project line updated",
+    "project.line_removed": "Project line removed", "project.built": "Project built",
+    "project.build_undone": "Project build undone", "catalogue.imported": "Catalogue imported",
+    "settings.updated": "Settings updated", "webhook.created": "Webhook added",
+    "webhook.deleted": "Webhook removed", "access.unlocked": "Signed in", "access.locked": "Signed out",
+    "export.created": "Export downloaded",
+}
+
+
+def item_payload(item_id):
+    row = db().execute("SELECT i.*, l.code, l.label AS location_label, l.kind FROM items i JOIN locations l ON l.id=i.location_id WHERE i.id=?", (item_id,)).fetchone()
+    if row is None:
+        abort(404)
+    item = dict(row)
+    item["attributes"] = json.loads(item["attributes"] or "{}")
+    item["location"] = item.pop("code")
+    return {"item": item, "location": {"id": item["location_id"], "code": item["location"], "label": item["location_label"], "kind": item.pop("kind")}}
+
+
 def dispatch_webhooks(event, payload):
-    destinations = db().execute("SELECT destination_url FROM webhooks WHERE event=? AND active=1", (event,)).fetchall()
-    if not destinations:
-        return
-    body = json.dumps({"event": event, "occurred_at": datetime.now(timezone.utc).isoformat(), **payload}).encode()
-    def send(url):
-        try:
-            urllib.request.urlopen(urllib.request.Request(url, data=body, headers={"Content-Type": "application/json", "User-Agent": "Parts-Ledger/1.0"}), timeout=4).close()
-        except Exception:
-            app.logger.warning("Webhook delivery failed for %s", url)
-    for destination in destinations:
-        threading.Thread(target=send, args=(destination["destination_url"],), daemon=True).start()
+    enqueue_event(db(), event, payload)
+
+
+@app.after_request
+def commit_read_events(response):
+    # Read-only actions (view, locate, exports, login) may also append events.
+    # Mutation routes commit their events together with their domain changes.
+    if "db" in g:
+        if response.status_code < 400:
+            g.db.commit()
+        else:
+            g.db.rollback()
+    return response
+
 
 def record_movement(conn, item, change, reason, event, project=None):
     now = datetime.now(timezone.utc).isoformat()
@@ -455,6 +488,9 @@ def new_item():
                 return render_template("item_form.html", item=None, locations=locations, selected_location=suggested_location, suggested_name=initial["name"], suggested_manufacturer=initial.get("manufacturer", ""), suggested_part_number=initial.get("part_number", ""), suggested_attributes=initial.get("attributes", {}), families=FAMILIES, family_homes=layout_setting("family_homes"), selected_family=selected_family)
             cur = conn.execute("INSERT INTO items(name, manufacturer, part_number, quantity, unit, minimum_quantity, location_id, notes, image_path, updated_at, family, attributes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (name, manufacturer, part_number, quantity, request.form.get("unit", "pcs").strip() or "pcs", minimum, location_id, request.form.get("notes", "").strip(), image_path, now, selected_family, json.dumps(attributes, ensure_ascii=False)))
             if quantity: conn.execute("INSERT INTO movements(item_id, quantity_change, reason, occurred_at) VALUES (?, ?, ?, ?)", (cur.lastrowid, quantity, "Initial stock", now))
+            dispatch_webhooks("item.created", item_payload(cur.lastrowid))
+            if quantity:
+                dispatch_webhooks("stock.in", {**item_payload(cur.lastrowid), "quantity_change": quantity, "unit": request.form.get("unit", "pcs"), "reason": "Initial stock", "project": None})
             conn.commit()
             flash("Item added.", "success")
             return redirect(url_for("item_detail", item_id=cur.lastrowid))
@@ -483,8 +519,11 @@ def item_detail(item_id):
         else:
             reason = request.form.get("reason", "Stock adjustment").strip() or "Stock adjustment"
             record_movement(conn, item, change, reason, "stock.in" if change > 0 else "stock.out")
-            conn.commit(); flash("Stock updated.", "success")
+            conn.commit()
+            flash("Stock updated.", "success")
             return redirect(url_for("item_detail", item_id=item_id))
+    if request.method == "GET":
+        dispatch_webhooks("item.viewed", item_payload(item_id))
     movements = conn.execute("SELECT * FROM movements WHERE item_id=? ORDER BY occurred_at DESC", (item_id,)).fetchall()
     try:
         attributes = json.loads(item["attributes"] or "{}")
@@ -500,6 +539,16 @@ def item_detail(item_id):
         family=family,
         attribute_labels=attribute_labels,
     )
+
+@app.route("/items/<int:item_id>/find", methods=["POST"])
+def find_item(item_id):
+    payload = item_payload(item_id)
+    dispatch_webhooks("item.found", payload)
+    if request.is_json:
+        return jsonify(payload)
+    flash(f"Locate {payload['item']['name']} at {payload['location']['code']}.", "success")
+    return redirect(url_for("item_detail", item_id=item_id))
+
 
 @app.route("/locations")
 def locations():
@@ -525,7 +574,10 @@ def new_location():
     else:
         try:
             image_path = image_upload("image") if enabled("images") else ""
-            db().execute("INSERT INTO locations(code, kind, label, notes, image_path, created_at) VALUES (?, ?, ?, ?, ?, ?)", (code, request.form.get("kind", "custom storage"), label, request.form.get("notes", ""), image_path, datetime.now(timezone.utc).isoformat())); db().commit(); flash("Storage location added.", "success")
+            location_id = db().execute("INSERT INTO locations(code, kind, label, notes, image_path, created_at) VALUES (?, ?, ?, ?, ?, ?)", (code, request.form.get("kind", "custom storage"), label, request.form.get("notes", ""), image_path, datetime.now(timezone.utc).isoformat())).lastrowid
+            dispatch_webhooks("location.created", {"location": dict(db().execute("SELECT * FROM locations WHERE id=?", (location_id,)).fetchone())})
+            db().commit()
+            flash("Storage location added.", "success")
         except sqlite3.IntegrityError: flash("That location code already exists.", "error")
         except ValueError as exc: flash(str(exc), "error")
     return redirect(url_for("locations"))
@@ -545,6 +597,7 @@ def projects():
             try:
                 image_path = image_upload("image") if enabled("images") else ""
                 project_id = conn.execute("INSERT INTO projects(title, description, image_path, created_at) VALUES (?, ?, ?, ?)", (title, request.form.get("description", "").strip(), image_path, datetime.now(timezone.utc).isoformat())).lastrowid
+                dispatch_webhooks("project.created", {"project": dict(conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())})
                 conn.commit()
                 flash("Project created.", "success")
                 return redirect(url_for("project_detail", project_id=project_id))
@@ -609,7 +662,9 @@ def project_detail(project_id):
         except (ValueError, TypeError):
             flash("Choose a component and enter how many one build needs.", "error")
         else:
+            existed = conn.execute("SELECT 1 FROM project_items WHERE project_id=? AND item_id=?", (project_id, item_id)).fetchone()
             conn.execute("INSERT INTO project_items(project_id, item_id, quantity, per_build) VALUES (?, ?, 0, ?) ON CONFLICT(project_id, item_id) DO UPDATE SET per_build=excluded.per_build", (project_id, item_id, per_build))
+            dispatch_webhooks("project.line_updated" if existed else "project.line_added", {"project": dict(project), **item_payload(item_id), "per_build": per_build})
             conn.commit()
             flash("Line added. Stock is only taken when you build.", "success")
         return back_to_project(project_id)
@@ -638,6 +693,7 @@ def update_project_line(project_id, item_id):
         flash("Enter how many one build needs, greater than zero.", "error")
     else:
         conn.execute("UPDATE project_items SET per_build=? WHERE project_id=? AND item_id=?", (per_build, project_id, item_id))
+        dispatch_webhooks("project.line_updated", {"project": {"id": project_id}, **item_payload(item_id), "per_build": per_build})
         conn.commit()
         flash("Line updated.", "success")
     return back_to_project(project_id)
@@ -647,6 +703,7 @@ def delete_project_line(project_id, item_id):
     conn = db()
     if not conn.execute("DELETE FROM project_items WHERE project_id=? AND item_id=?", (project_id, item_id)).rowcount:
         abort(404)
+    dispatch_webhooks("project.line_removed", {"project": {"id": project_id}, **item_payload(item_id)})
     conn.commit()
     flash("Line removed. Stock it has already used stays in the history.", "success")
     return back_to_project(project_id)
@@ -673,6 +730,7 @@ def build_project(project_id):
                 record_movement(conn, line, -line["need"], f"Built {project['title']} ×{wanted}", "stock.out", reference)
                 conn.execute("UPDATE project_items SET quantity=quantity+? WHERE project_id=? AND item_id=?", (line["need"], project_id, line["id"]))
             build_id = conn.execute("INSERT INTO builds(project_id, quantity, lines, built_at) VALUES (?, ?, ?, ?)", (project_id, wanted, json.dumps([[line["id"], line["need"]] for line in plan]), datetime.now(timezone.utc).isoformat())).lastrowid
+            dispatch_webhooks("project.built", {"project": reference, "build_id": build_id, "quantity": wanted, "lines": [{"item": {"id": line["id"], "name": line["name"], "part_number": line["part_number"], "location": line["code"]}, "quantity_change": -line["need"], "unit": line["unit"]} for line in plan]})
     if not plan:
         flash("Add at least one line to the bill of materials first.", "error")
     elif short:
@@ -680,7 +738,6 @@ def build_project(project_id):
         more = f" and {len(short) - 3} more" if len(short) > 3 else ""
         flash(f"Not enough stock to build {wanted}: {detail}{more}.", "error")
     else:
-        dispatch_webhooks("project.built", {"project": reference, "build_id": build_id, "quantity": wanted, "lines": [{"item": {"id": line["id"], "name": line["name"], "part_number": line["part_number"], "location": line["code"]}, "quantity_change": -line["need"], "unit": line["unit"]} for line in plan]})
         flash(f"Built {project['title']} ×{wanted}: {len(plan)} line{'s' if len(plan) != 1 else ''} taken from stock.", "success")
     return back_to_project(project_id)
 
@@ -704,6 +761,8 @@ def undo_build(project_id, build_id):
                     continue
                 record_movement(conn, item, quantity, reason, "stock.returned", {"id": project_id, "title": build["title"]})
                 conn.execute("UPDATE project_items SET quantity=max(quantity-?, 0) WHERE project_id=? AND item_id=?", (quantity, project_id, item_id))
+        if undone:
+            dispatch_webhooks("project.build_undone", {"project": {"id": project_id, "title": build["title"]}, "build_id": build_id, "quantity": build["quantity"], "lines": [{"item_id": item_id, "quantity_change": quantity} for item_id, quantity in lines]})
     if undone:
         flash(f"Build undone: {len(lines)} line{'s' if len(lines) != 1 else ''} returned to stock.", "success")
     else:
@@ -730,6 +789,7 @@ def export_inventory(format):
     return export_rows(rows, ["Component", "Manufacturer", "Part number", "On hand", "Unit", "Minimum", "Location"], "tally-inventory", format, "Inventory report")
 
 def export_rows(rows, columns, filename, format, title):
+    dispatch_webhooks("export.created", {"filename": f"{filename}.{format}", "format": format})
     if format == "csv":
         output = BytesIO()
         text = output.write
@@ -767,7 +827,7 @@ def settings():
     webhooks = db().execute("SELECT * FROM webhooks ORDER BY event, id").fetchall()
     catalogue_count = db().execute("SELECT COUNT(*) FROM catalogue").fetchone()[0]
     source = db().execute("SELECT value FROM settings WHERE key='catalogue.url'").fetchone()
-    return render_template("settings.html", webhooks=webhooks, flags=flags, auth_enabled=auth_enabled(), catalogue_count=catalogue_count, catalogue_url=source["value"] if source else "")
+    return render_template("settings.html", webhooks=webhooks, webhook_events=WEBHOOK_EVENTS, flags=flags, auth_enabled=auth_enabled(), catalogue_count=catalogue_count, catalogue_url=source["value"] if source else "")
 
 @app.route("/settings/catalogue", methods=["POST"])
 def import_catalogue():
@@ -792,12 +852,14 @@ def import_catalogue():
         save_catalogue(conn, entries, replace=bool(request.form.get("replace")))
         if url and not (upload and upload.filename):
             conn.execute("INSERT INTO settings(key, value) VALUES ('catalogue.url', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (url,))
+        dispatch_webhooks("catalogue.imported", {"count": len(entries), "replace": bool(request.form.get("replace"))})
     flash(f"Catalogue updated with {len(entries)} item{'s' if len(entries) != 1 else ''}.", "success")
     return redirect(url_for("settings"))
 
 @app.route("/settings/catalogue.json")
 def export_catalogue():
     items = [{key: entry[key] for key in ("name", "family", "manufacturer", "part_number", "attributes")} for entry in catalogue_entries()]
+    dispatch_webhooks("export.created", {"filename": "tally-catalogue.json", "format": "json"})
     response = jsonify(items=items)
     response.headers["Content-Disposition"] = "attachment; filename=tally-catalogue.json"
     return response
@@ -805,17 +867,19 @@ def export_catalogue():
 @app.route("/settings/webhooks", methods=["POST"])
 def add_webhook():
     event, destination_url = request.form.get("event", ""), request.form.get("destination_url", "").strip()
-    events = {"stock.in", "stock.out", "stock.returned", "stock.lost", "project.built"}
+    events = {*WEBHOOK_EVENTS, "*"}
     if event not in events or not valid_webhook_url(destination_url):
         flash("Choose an event and enter a valid http(s) destination URL.", "error")
     else:
-        db().execute("INSERT INTO webhooks(event, destination_url, created_at) VALUES (?, ?, ?)", (event, destination_url, datetime.now(timezone.utc).isoformat())); db().commit()
+        db().execute("INSERT INTO webhooks(event, destination_url, created_at) VALUES (?, ?, ?)", (event, destination_url, datetime.now(timezone.utc).isoformat()))
+        dispatch_webhooks("webhook.created", {"subscription": {"event": event}})
         flash("Webhook destination added.", "success")
     return redirect(url_for("settings"))
 
 @app.route("/settings/webhooks/<int:webhook_id>/delete", methods=["POST"])
 def delete_webhook(webhook_id):
-    db().execute("DELETE FROM webhooks WHERE id=?", (webhook_id,)); db().commit()
+    db().execute("DELETE FROM webhooks WHERE id=?", (webhook_id,))
+    dispatch_webhooks("webhook.deleted", {"webhook_id": webhook_id})
     flash("Webhook destination removed.", "success")
     return redirect(url_for("settings"))
 
@@ -823,7 +887,8 @@ def delete_webhook(webhook_id):
 def update_features():
     for flag in ("images", "add_components", "edit_components", "exports"):
         set_setting(f"feature.{flag}", "1" if request.form.get(flag) else "0")
-    db().commit(); flash("Feature settings saved.", "success")
+    dispatch_webhooks("settings.updated", {"section": "features"})
+    flash("Feature settings saved.", "success")
     return redirect(url_for("settings"))
 
 @app.route("/settings/access", methods=["POST"])
@@ -835,7 +900,8 @@ def update_access_password():
         password_hash = generate_password_hash(password)
         set_setting("access.password_hash", password_hash)
         session["access_unlocked"] = access_token(password_hash)
-        db().commit(); flash("Access password saved.", "success")
+        dispatch_webhooks("settings.updated", {"section": "access"})
+        flash("Access password saved.", "success")
     return redirect(url_for("settings"))
 
 @app.route("/settings/auth", methods=["POST"])
@@ -848,7 +914,7 @@ def update_auth():
         set_setting("auth.enabled", "1" if should_enable else "0")
         if not should_enable:
             session.pop("access_unlocked", None)
-        db().commit()
+        dispatch_webhooks("settings.updated", {"section": "authentication", "enabled": should_enable})
         flash("Authentication enabled." if should_enable else "Authentication disabled.", "success")
     return redirect(url_for("settings"))
 
@@ -856,4 +922,5 @@ def update_auth():
 def download_backup():
     if not DB_PATH.exists():
         abort(404)
+    dispatch_webhooks("export.created", {"filename": "tally-backup.sqlite3", "format": "sqlite3"})
     return send_file(DB_PATH, mimetype="application/x-sqlite3", as_attachment=True, download_name="tally-backup.sqlite3")

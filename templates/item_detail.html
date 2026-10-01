@@ -17,6 +17,7 @@
 </section>
 
 <div class="page-actions start detail-actions">
+  <form method="post" action="{{url_for('find_item', item_id=item['id'])}}"><button class="button">Locate item</button></form>
   <a class="button primary" href="{{url_for('stock', add=item['id'])}}">{{ icon('swap') }}Use in stock checkout</a>
   <a class="button" href="{{url_for('quick_add', q=item['name'], item=item['id'])}}">{{ icon('zap') }}Receive stock</a>
   <a class="button" href="{{url_for('locations', q=item['code'])}}">{{ icon('archive') }}Find the drawer</a>
