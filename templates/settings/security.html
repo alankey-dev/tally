@@ -1,0 +1,19 @@
+<div class="card">
+  <h2>Access</h2>
+  <p class="copy">Sign-in is currently <strong>{{'required' if auth_enabled else 'off'}}</strong>. Set a password first, then require it.</p>
+  <form method="post" action="{{url_for('update_access_password')}}" class="password-form">
+    <label>Access password<input name="password" type="password" minlength="10" required autocomplete="new-password" placeholder="At least 10 characters"></label>
+    <button class="button">Save password</button>
+  </form>
+  <hr>
+  <form method="post" action="{{url_for('update_auth')}}" class="feature-form">
+    <label class="check"><input name="auth_enabled" type="checkbox"{% if auth_enabled %} checked{% endif %}> Require sign-in to use Tally</label>
+    <button class="button {{'primary' if not auth_enabled}}">{{'Save access setting' if auth_enabled else 'Require sign-in'}}</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Backups</h2>
+  <p class="copy">Download a SQLite backup before migrations or maintenance.</p>
+  <a class="button" href="{{url_for('download_backup')}}">{{ icon('download') }}Download backup</a>
+</div>

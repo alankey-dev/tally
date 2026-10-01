@@ -1,0 +1,12 @@
+<div class="card">
+  <h2>Quick add catalogue</h2>
+  <p class="copy">{{catalogue_count}} known part{{'s' if catalogue_count != 1}} with prefilled details. Import a JSON or CSV file, or a URL such as a raw GitHub file, to add to or update them by name.</p>
+  <form method="post" action="{{url_for('import_catalogue')}}" enctype="multipart/form-data" class="password-form">
+    <label>Catalogue file<input name="file" type="file" accept=".json,.csv,application/json,text/csv"></label>
+    <label>Or catalogue URL<input name="url" type="url" value="{{catalogue_url}}" placeholder="https://example.com/catalogue.json"></label>
+    <label class="check"><input name="replace" type="checkbox"> Replace the whole catalogue</label>
+    <button class="button primary">{{'Refresh catalogue' if catalogue_url else 'Import catalogue'}}</button>
+  </form>
+  <hr>
+  <a class="button" href="{{url_for('export_catalogue')}}">{{ icon('download') }}Download catalogue</a>
+</div>

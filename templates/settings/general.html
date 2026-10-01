@@ -1,0 +1,20 @@
+<div class="card">
+  <h2>Features</h2>
+  <p class="copy">Switch off what this workspace does not need.</p>
+  <form method="post" action="{{url_for('update_features')}}" class="feature-form">
+    {% for key, label in [('images', 'Display and upload images'), ('add_components', 'Add components'), ('edit_components', 'Edit components'), ('exports', 'Export CSV and PDF')] %}
+    <label class="check"><input name="{{key}}" type="checkbox"{% if flags[key] %} checked{% endif %}> {{label}}</label>
+    {% endfor %}
+    <button class="button primary">Save feature settings</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Appearance</h2>
+  <p class="copy">Your choice is stored on this device only.</p>
+  <div class="theme-options" role="group" aria-label="Theme">
+    <button type="button" class="button" data-theme-choice="system">Match system</button>
+    <button type="button" class="button" data-theme-choice="light">{{ icon('sun') }}Light</button>
+    <button type="button" class="button" data-theme-choice="dark">{{ icon('moon') }}Dark</button>
+  </div>
+</div>

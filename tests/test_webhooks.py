@@ -27,7 +27,7 @@ class WebhookTests(unittest.TestCase):
                 self.client.post('/settings/webhooks', data=dict(event=event, destination_url='http://controller.local/led'))
         with main.app.app_context():
             self.assertEqual(main.db().execute('SELECT count(*) FROM webhooks').fetchone()[0], len(main.WEBHOOK_EVENTS) + 1)
-        html = self.client.get('/settings').get_data(as_text=True)
+        html = self.client.get('/settings/webhooks').get_data(as_text=True)
         for event in main.WEBHOOK_EVENTS:
             self.assertIn(f'value="{event}"', html)
 

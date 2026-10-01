@@ -3,6 +3,20 @@
   const results = document.querySelector('#quick-results');
   const status = document.querySelector('#quick-status');
   if (!input || !results) return;
+  results.addEventListener('click', async (event) => {
+    const link = event.target.closest('[data-provider-search]');
+    if (!link) return;
+    event.preventDefault();
+    status.textContent = 'Searching providers…';
+    try {
+      const response = await fetch(link.href + '&fragment=1', {cache: 'no-store'});
+      if (!response.ok) throw new Error('Search failed');
+      results.innerHTML = await response.text();
+      status.textContent = '';
+    } catch (error) {
+      status.textContent = 'Could not search providers. Try again.';
+    }
+  });
   let timer;
   let controller;
   let revision = 0;
