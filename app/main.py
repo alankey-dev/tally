@@ -87,18 +87,27 @@ def init_db():
         conn.execute("ALTER TABLE locations ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
     if LAYOUT and conn.execute("SELECT COUNT(*) FROM locations").fetchone()[0] == 0:
         seed_layout(conn, load_layout(LAYOUT))
+    elif LAYOUT and not conn.execute("SELECT 1 FROM settings WHERE key='layout.groups'").fetchone():
+        # Storage created before layouts existed: keep it, but take the layout's names and hints.
+        seed_layout(conn, load_layout(LAYOUT), existing=True)
     conn.commit()
 
 def load_layout(name):
     path = LAYOUT_DIR / f"{name}.json" if (LAYOUT_DIR / f"{name}.json").exists() else Path(name)
     return json.loads(path.read_text())
 
-def seed_layout(conn, layout):
-    now = datetime.now(timezone.utc).isoformat()
-    conn.executemany(
-        "INSERT INTO locations(code, kind, label, keywords, created_at) VALUES (?, ?, ?, ?, ?)",
-        [(row["code"], row.get("kind", "storage"), row["label"], row.get("keywords", ""), now) for row in layout["locations"]],
-    )
+def seed_layout(conn, layout, existing=False):
+    if existing:
+        conn.executemany(
+            "UPDATE locations SET keywords=? WHERE code=? AND keywords=''",
+            [(row["keywords"], row["code"]) for row in layout["locations"] if row.get("keywords")],
+        )
+    else:
+        now = datetime.now(timezone.utc).isoformat()
+        conn.executemany(
+            "INSERT INTO locations(code, kind, label, keywords, created_at) VALUES (?, ?, ?, ?, ?)",
+            [(row["code"], row.get("kind", "storage"), row["label"], row.get("keywords", ""), now) for row in layout["locations"]],
+        )
     for key in ("groups", "family_homes"):
         conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)", (f"layout.{key}", json.dumps(layout.get(key, {}))))
 
