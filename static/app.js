@@ -120,6 +120,22 @@
     setInterval(checkForUpdates, 5000);
   }
 
+  // Build planner: the need and shortfall of each line follow the number of builds as it is typed.
+  const planner = document.querySelector('[data-build-planner]');
+  if (planner) {
+    const wanted = planner.querySelector('[name="quantity"]');
+    wanted.addEventListener('input', () => {
+      const count = Math.max(1, Math.floor(Number(wanted.value) || 1));
+      document.querySelectorAll('[data-build-count]').forEach(node => node.textContent = `×${count}`);
+      document.querySelectorAll('[data-line]').forEach(row => {
+        const need = Number(row.dataset.perBuild) * count;
+        const short = need - Number(row.dataset.onHand);
+        row.querySelector('[data-need]').textContent = `${formatQuantity(need)} ${row.dataset.unit}`;
+        row.querySelector('[data-status]').innerHTML = short > 1e-9 ? `<span class="badge danger">Short ${formatQuantity(short)}</span>` : '<span class="badge neutral">Covered</span>';
+      });
+    });
+  }
+
   const menuToggle = document.querySelector('[data-menu-toggle]');
   const sheet = document.querySelector('[data-menu-sheet]');
   if (menuToggle && sheet) {

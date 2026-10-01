@@ -1,44 +1,62 @@
 {% extends 'base.html' %}
 {% from '_macros.html' import icon %}
 {% block title %}{{project['title']}} · Tally{% endblock %}
+{% block body_attrs %} data-live="true"{% endblock %}
 {% block content %}
 <a class="back" href="{{url_for('projects')}}">{{ icon('back', 'small') }}Projects</a>
-<section class="page-head">
+<section class="page-head detail-head">
   <div>
     <p class="eyebrow">Project</p>
     <h1>{{project['title']}}</h1>
     <p class="lede">{{project['description'] or 'No description yet.'}}</p>
   </div>
-  <div class="page-actions">
-    <a class="button" href="{{url_for('export_bom', project_id=project['id'], format='csv')}}">{{ icon('download') }}CSV</a>
-    <a class="button" href="{{url_for('export_bom', project_id=project['id'], format='pdf')}}">{{ icon('download') }}PDF</a>
+  <div class="quantity-panel {{ 'out' if plan and buildable == 0 }}">
+    <strong>{{buildable}}</strong>
+    <span>{{'build' if buildable == 1 else 'builds'}} possible from stock</span>
   </div>
 </section>
 
-<section class="split wide">
-  <div class="card">
-    <div class="card-head">
-      <h2>Bill of materials</h2>
-      <span class="badge neutral">{{project_items|length}} {{'line' if project_items|length == 1 else 'lines'}}</span>
-    </div>
-    <div class="record-list">
-      {% for item in project_items %}
-      <div class="record">
-        <div>
-          <strong>{{item['name']}}</strong>
-          <small><code>{{item['code']}}</code> · {{item['part_number'] or 'No part number'}}</small>
-        </div>
-        <span class="qty">{{item['quantity']|qty}} <span>{{item['unit']}}</span></span>
-      </div>
-      {% else %}
-      <div class="empty">No components allocated yet. Search on the right to add some.</div>
-      {% endfor %}
-    </div>
-  </div>
+<div class="page-actions start detail-actions">
+  <a class="button" href="{{url_for('export_bom', project_id=project['id'], format='csv')}}">{{ icon('download') }}CSV</a>
+  <a class="button" href="{{url_for('export_bom', project_id=project['id'], format='pdf')}}">{{ icon('download') }}PDF</a>
+</div>
 
+<div class="section-head">
+  <h2>Bill of materials</h2>
+  <span class="badge neutral">{{plan|length}} {{'line' if plan|length == 1 else 'lines'}}</span>
+</div>
+<form class="build-form" method="post" action="{{url_for('build_project', project_id=project['id'])}}" data-build-planner>
+  <label class="inline-qty">Build<input name="quantity" type="number" min="1" step="1" value="{{wanted}}" required aria-label="Number of builds"></label>
+  <button class="button" formmethod="get" formaction="{{url_for('project_detail', project_id=project['id'])}}" formnovalidate>Check stock</button>
+  <button class="button primary"{% if not plan %} disabled{% endif %}>{{ icon('swap') }}Build <span data-build-count>×{{wanted}}</span></button>
+</form>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Component</th><th class="num">Per build</th><th class="num">Need <span data-build-count>×{{wanted}}</span></th><th class="num">On hand</th><th>Status</th><th class="num">Consumed</th><th></th></tr></thead>
+    <tbody>
+      {% for line in plan %}
+      <tr data-line data-per-build="{{line['per_build']}}" data-on-hand="{{line['on_hand']}}" data-unit="{{line['unit']}}">
+        <td data-label="Component"><a href="{{url_for('item_detail', item_id=line['id'])}}">{{line['name']}}</a><br><small><code>{{line['code']}}</code> · {{line['part_number'] or 'No part number'}}</small></td>
+        <td data-label="Per build" class="num"><form class="inline-qty" method="post" action="{{url_for('update_project_line', project_id=project['id'], item_id=line['id'])}}"><input name="per_build" type="number" min="0.001" step="any" value="{{line['per_build']|qty}}" aria-label="Quantity of {{line['name']}} per build"><button class="button small">Save</button></form></td>
+        <td data-label="Need" class="num" data-need>{{line['need']|qty}} {{line['unit']}}</td>
+        <td data-label="On hand" class="num">{{line['on_hand']|qty}} {{line['unit']}}</td>
+        <td data-label="Status" data-status>{% if line['short'] > 0 %}<span class="badge danger">Short {{line['short']|qty}}</span>{% else %}<span class="badge neutral">Covered</span>{% endif %}</td>
+        <td data-label="Consumed" class="num">{{line['consumed']|qty}}</td>
+        <td class="actions"><form method="post" action="{{url_for('delete_project_line', project_id=project['id'], item_id=line['id'])}}"><button class="button small quiet danger">Remove</button></form></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7"><div class="empty">No lines yet. Search on the right to add what one build needs.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<section class="split wide build-foot">
   <aside class="card">
-    <h2>Add component</h2>
+    <h2>Add a line</h2>
+    <p class="copy card-intro">Say how many one build needs. Stock is only taken when you build.</p>
     <form method="get" class="project-search" role="search">
+      {% if wanted > 1 %}<input type="hidden" name="quantity" value="{{wanted}}">{% endif %}
       <input name="q" value="{{query}}" placeholder="Search components" aria-label="Search components">
       <button>Find</button>
     </form>
@@ -48,9 +66,9 @@
       <form method="post">
         <input type="hidden" name="item_id" value="{{component['id']}}">
         <strong>{{component['name']}}</strong>
-        <small>{{component['quantity']|qty}} {{component['unit']}} available · <code>{{component['code']}}</code></small>
-        <label class="inline-qty">Qty<input name="quantity" value="1" min="0.01" step="any" type="number" aria-label="Quantity of {{component['name']}}"></label>
-        <button class="button small">Allocate</button>
+        <small>{{component['quantity']|qty}} {{component['unit']}} on hand · <code>{{component['code']}}</code></small>
+        <label class="inline-qty">Per build<input name="per_build" value="1" min="0.001" step="any" type="number" aria-label="Quantity of {{component['name']}} per build"></label>
+        <button class="button small">Add line</button>
       </form>
       {% else %}
       <div class="empty">No components found.</div>
@@ -58,5 +76,25 @@
     </div>
     {% endif %}
   </aside>
+  <div>
+    <div class="section-head"><h2>Builds</h2></div>
+    <div class="record-list">
+      {% for build in builds %}
+      <div class="record">
+        <div>
+          <strong>Built ×{{build['quantity']}}</strong>
+          <small>{{build['built_at'][:16].replace('T', ' ')}}</small>
+        </div>
+        {% if build['undone_at'] %}
+        <span class="badge neutral">Undone {{build['undone_at'][:10]}}</span>
+        {% else %}
+        <form method="post" action="{{url_for('undo_build', project_id=project['id'], build_id=build['id'])}}"><button class="button small quiet">Undo</button></form>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="empty">Nothing built yet. A build takes every line from stock in one go.</div>
+      {% endfor %}
+    </div>
+  </div>
 </section>
 {% endblock %}
