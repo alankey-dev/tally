@@ -111,7 +111,7 @@
       try {
         const {version} = await (await fetch('/api/version', {cache: 'no-store'})).json();
         if (currentVersion && currentVersion !== version) {
-          if (document.activeElement.matches('input, textarea, select') || document.querySelector('dialog[open]')) return;
+          if (document.activeElement.matches('input, textarea, select') || [...document.querySelectorAll('input[type=file]')].some((input) => input.files.length) || document.querySelector('dialog[open]')) return;
           window.location.reload();
         }
         currentVersion = version;

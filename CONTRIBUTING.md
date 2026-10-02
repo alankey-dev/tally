@@ -33,6 +33,21 @@ Label sizes are the entries of `LABEL_PRESETS` in `app/main.py`. Each gives the 
 
 Layouts are JSON files in `app/layouts/`. Each location needs a `code` and a `label`, and can also have a `kind` and search `keywords`. `groups` names the code prefixes, and `family_homes` maps a component family to the location where new parts of that family go by default. See `example.json`.
 
+## Importing a BOM
+
+A project page takes a BOM CSV from KiCad, EasyEDA or JLCPCB tooling. The file can be UTF-8, UTF-16 or cp1252, and use `,`, `;` or tab. The header row is found in the first 10 rows by these column names, ignoring case:
+
+| Field | Column names |
+| --- | --- |
+| designator | Reference, References, Designator |
+| quantity | Qty, Quantity |
+| value | Value, Comment, Name |
+| footprint | Footprint, Package |
+| mpn | MPN, Manufacturer Part, Manufacturer Part Number |
+| supplier code | LCSC Part #, LCSC, Supplier Part, JLCPCB Part # |
+
+A file needs a designator column and a value, MPN or supplier code column. A file can be up to 5 MB and 300 grouped lines (`MAX_BOM_BYTES` and `MAX_BOM_LINES` in `app/main.py`). Rows marked DNP are skipped. The review keeps no state on the server, so each step posts the whole review back, and importing never moves stock.
+
 ## Sharing a parts catalogue
 
 Quick add suggests known parts from a catalogue kept in the database. It starts from `app/catalogue.json`; replace or extend it under **Settings → Quick add catalogue** by uploading a file or entering a URL (the URL is remembered, so one click refreshes it). Entries are matched by name, so re-importing updates them.

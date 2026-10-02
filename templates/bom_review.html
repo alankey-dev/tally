@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}Review BOM · {{project['title']}} · Tally{% endblock %}
+{% block content %}
+<a class="back" href="{{url_for('project_detail', project_id=project['id'])}}">{{ icon('back', 'small') }}{{project['title']}}</a>
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Import a BOM</p>
+    <h1>Review the matches</h1>
+    <p class="lede">Choose an item for each line, or skip it. Nothing is added until you press Add. Stock is only taken when you build.</p>
+  </div>
+</section>
+<div class="section-head">
+  <h2>Lines</h2>
+  <span class="badge neutral">{{rows|length}} {{'line' if rows|length == 1 else 'lines'}}</span>
+  {% if skipped %}<span class="badge neutral">{{skipped}} DNP {{'row' if skipped == 1 else 'rows'}} skipped</span>{% endif %}
+</div>
+<form method="post" action="{{url_for('commit_bom_import', project_id=project['id'])}}">
+  <input type="hidden" name="lines" value='{{lines|tojson}}'>
+  <input type="hidden" name="dnp" value="{{skipped}}">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Designators</th><th>Part</th><th>Match</th><th class="num">Per build</th></tr></thead>
+      <tbody>
+        {% for row in rows %}{% set line = row['line'] %}
+        <tr>
+          <td data-label="Designators">{{line['designators'] or '-'}}{% if line['warn'] %}<br><span class="badge warn">Qty differs from designators</span>{% endif %}</td>
+          <td data-label="Part">{{line['value'] or '-'}}<br><small>{{line['footprint']}}{% if line['mpn'] or line['supplier_code'] %} · {{line['mpn']}} {{line['supplier_code']}}{% endif %}</small></td>
+          <td data-label="Match">
+            <select name="item_{{row['n']}}" aria-label="Item for {{line['designators']}} ({{line['value']}})">
+              {% for item in row['candidates'] %}<option value="{{item['id']}}"{% if item['id'] == row['selected'] %} selected{% endif %}>{{item['name']}} · {{item['quantity']|qty}} {{item['unit']}} · {{item['code']}}</option>{% endfor %}
+              <option value="skip"{% if row['selected'] is none %} selected{% endif %}>Skip this line</option>
+            </select>
+            <br>
+            {% if row['error'] %}<span class="badge danger">{{row['error']}}</span>
+            {% elif row['status'] == 'part' %}<span class="badge neutral">Part number</span>
+            {% elif row['status'] == 'name' %}<span class="badge warn">Name match</span>
+            {% else %}<span class="badge danger">No match</span>{% endif %}
+            {% if row['existing'] is not none %}<span class="badge neutral">Already a line, ×{{row['existing']|qty}}</span>{% endif %}
+            <br>
+            <span class="inline-qty"><input type="search" name="q_{{row['n']}}" value="{{row['search']}}" placeholder="Search" aria-label="Search for {{line['designators']}} ({{line['value']}})"><button class="button small quiet" formaction="{{url_for('import_bom', project_id=project['id'])}}" formnovalidate>Match again</button></span>
+            {% if can_add_items %}<a class="button small quiet" href="{{url_for('new_item', name=row['name'])}}" target="_blank" rel="noopener">New item</a>{% endif %}
+          </td>
+          <td data-label="Per build" class="num"><input name="per_build_{{row['n']}}" type="number" min="0.001" step="any" value="{{row['per_build']}}" aria-label="Quantity of {{line['value']}} per build"></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4"><div class="empty">No lines to review.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="form-actions">
+    <button class="button primary">{{ icon('file') }}Add {{accepted}} {{'line' if accepted == 1 else 'lines'}}</button>
+    <a class="button" href="{{url_for('project_detail', project_id=project['id'])}}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

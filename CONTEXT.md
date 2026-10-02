@@ -36,6 +36,10 @@ The distributor's order code for an item, kept for reordering.
 **Stock movement**:
 A dated increase or decrease to an item’s on-hand quantity.
 
+**Designator**:
+A board reference such as R12 in a CAD BOM. Tally groups designators into one line and does not store them.
+_Avoid_: Reference
+
 **Line**:
 An item a project’s bill of materials needs, with the quantity one build takes. Adding a line never moves stock.
 _Avoid_: Allocation

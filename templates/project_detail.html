@@ -79,6 +79,14 @@
       {% endfor %}
     </div>
     {% endif %}
+    <div class="bom-import">
+      <h2>Import a BOM</h2>
+      <p class="copy card-intro">Upload the CSV your CAD tool exports. You review the matches before anything is added.</p>
+      <form method="post" action="{{url_for('import_bom', project_id=project['id'])}}" enctype="multipart/form-data" class="project-search">
+        <input type="file" name="file" accept=".csv,.tsv,.txt,text/csv,text/comma-separated-values,text/tab-separated-values,application/vnd.ms-excel,text/plain" required aria-label="BOM file">
+        <button class="button primary">{{ icon('file') }}Import</button>
+      </form>
+    </div>
   </aside>
   <div>
     <div class="section-head"><h2>Builds</h2></div>

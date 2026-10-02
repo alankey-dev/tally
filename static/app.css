@@ -393,6 +393,7 @@ a.metric:hover { background: var(--surface-2); text-decoration: none; }
 .project-card p { color: var(--text-2); font-size: .8125rem; }
 .project-card .badge { align-self: flex-start; margin-top: 10px; }
 .project-search { display: flex; gap: 8px; }
+.bom-import { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
 .project-search input { margin: 0; }
 .project-search-results { display: grid; gap: 8px; margin-top: 14px; }
 .project-search-results form { display: grid; grid-template-columns: 1fr auto; gap: 1px 10px; align-items: center; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); }

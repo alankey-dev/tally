@@ -26,6 +26,7 @@ from app.webhooks import init_outbox, enqueue_event, start_worker
 from app import providers as part_providers
 from app.matching import ranked, suggested_homes
 from app.bag_labels import parse_bag_label
+from app.bom import TEXT_FIELDS, package_of, parse_bom, prepare_items, match_line
 from app.catalogue import FAMILIES, classify, common_suggestions, parse_catalogue
 
 DB_PATH = Path(os.environ.get("STORAGE_DB", "data/storage.db"))
@@ -35,6 +36,8 @@ LAYOUT = os.environ.get("TALLY_LAYOUT", "")
 LAYOUT_DIR = Path(__file__).parent / "layouts"
 DEFAULT_CATALOGUE = Path(__file__).parent / "catalogue.json"
 MAX_CATALOGUE_BYTES = 5 * 1024 * 1024
+MAX_BOM_BYTES = 5 * 1024 * 1024
+MAX_BOM_LINES = 300
 
 def secret_key():
     """Use SECRET_KEY when set; otherwise generate one beside the database and keep it."""
@@ -815,6 +818,119 @@ def project_detail(project_id):
         args = [f"%{query}%"] * 2
     component_sql += " ORDER BY i.name COLLATE NOCASE LIMIT 30"
     return render_template("project_detail.html", project=project, plan=plan, wanted=wanted, max_builds=MAX_BUILDS, buildable=buildable(plan), builds=builds, components=conn.execute(component_sql, args).fetchall(), query=query)
+
+def read_bom_lines(raw):
+    """The `lines` field of a review form, checked, since it can be edited on the way back."""
+    if not raw:
+        raise ValueError("Choose a BOM file to import.")
+    bad = ValueError("The review could not be read. Upload the file again.")
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError):
+        raise bad
+    if not isinstance(data, list) or len(data) > MAX_BOM_LINES or not all(isinstance(entry, dict) for entry in data):
+        raise bad
+    lines = []
+    for entry in data:
+        line = {key: entry.get(key, "") for key in TEXT_FIELDS}
+        quantity, suggested = entry.get("quantity"), entry.get("suggested")
+        if (not all(isinstance(value, str) and len(value) <= 200 for value in line.values())
+                or isinstance(quantity, bool) or not isinstance(quantity, (int, float)) or not math.isfinite(quantity)
+                or isinstance(suggested, bool) or not (suggested is None or isinstance(suggested, int))):
+            raise bad
+        lines.append({**line, "quantity": quantity, "suggested": suggested, "warn": bool(entry.get("warn"))})
+    return lines
+
+def bom_review(conn, project, lines, form=None, skipped=0, errors=None):
+    """Render the review: each line with its candidate items. A line set by hand, or searched, keeps its choice."""
+    index = prepare_items(conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id ORDER BY i.name COLLATE NOCASE"))
+    by_id = {item["id"]: item for item in index["items"]}
+    existing = {row["item_id"]: row["per_build"] for row in conn.execute("SELECT item_id, per_build FROM project_items WHERE project_id=?", (project["id"],))}
+    rows = []
+    for n, line in enumerate(lines):
+        search = form.get(f"q_{n}", "").strip()[:200] if form else ""
+        status, candidates = match_line(line, index, search)
+        chosen = form.get(f"item_{n}", "skip") if form else None
+        chosen = int(chosen) if str(chosen).isdigit() else None
+        if form and (chosen != line["suggested"] or search):
+            selected = chosen
+        else:
+            selected = line["suggested"] = candidates[0]["id"] if candidates else None
+        if selected in by_id and all(item["id"] != selected for item in candidates):
+            candidates.append(by_id[selected])
+        rows.append({"n": n, "line": line, "status": status, "candidates": candidates, "selected": selected, "search": search,
+                     "per_build": form.get(f"per_build_{n}", "") if form else format_quantity(line["quantity"]), "existing": existing.get(selected),
+                     "error": (errors or {}).get(n), "name": " ".join(part for part in (line["value"], package_of(line["footprint"])) if part)})
+    return render_template("bom_review.html", project=project, rows=rows, lines=[row["line"] for row in rows], skipped=skipped,
+                           accepted=sum(row["selected"] is not None for row in rows), can_add_items=enabled("add_components"))
+
+@app.route("/projects/<int:project_id>/import", methods=["POST"])
+def import_bom(project_id):
+    """Read an uploaded BOM and show the review, or, with no file, match the review's lines again."""
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    if not project:
+        abort(404)
+    upload = request.files.get("file")
+    form, skipped = None, 0
+    try:
+        if upload and upload.filename:
+            raw = upload.read(MAX_BOM_BYTES + 1)
+            if len(raw) > MAX_BOM_BYTES:
+                raise ValueError("The BOM is larger than 5 MB.")
+            lines, skipped = parse_bom(raw)
+            if not lines:
+                raise ValueError("The file has no lines to import.")
+            if len(lines) > MAX_BOM_LINES:
+                raise ValueError(f"The BOM has more than {MAX_BOM_LINES} lines.")
+            lines = [{**line, "suggested": None} for line in lines]
+        else:
+            lines, form, skipped = read_bom_lines(request.form.get("lines")), request.form, max(0, request.form.get("dnp", 0, type=int))
+    except ValueError as error:
+        flash(str(error), "error")
+        return redirect(url_for("project_detail", project_id=project_id))
+    return bom_review(conn, project, lines, form, skipped)
+
+@app.route("/projects/<int:project_id>/import/commit", methods=["POST"])
+def commit_bom_import(project_id):
+    """Add every accepted line of the review to the bill of materials, or none if any line is invalid."""
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    if not project:
+        abort(404)
+    try:
+        lines = read_bom_lines(request.form.get("lines"))
+    except ValueError as error:
+        flash(str(error), "error")
+        return redirect(url_for("project_detail", project_id=project_id))
+    ids = {row["id"] for row in conn.execute("SELECT id FROM items")}
+    totals, errors, skipped = {}, {}, 0
+    for n in range(len(lines)):
+        choice = request.form.get(f"item_{n}", "skip")
+        if choice == "skip":
+            skipped += 1
+            continue
+        try:
+            item_id, per_build = int(choice), float(request.form.get(f"per_build_{n}", ""))
+            if item_id not in ids or not math.isfinite(per_build) or per_build <= 0:
+                raise ValueError()
+        except (ValueError, TypeError):
+            errors[n] = "Choose an item and enter how many one build needs."
+        else:
+            totals[item_id] = totals.get(item_id, 0) + per_build
+    if errors:
+        return bom_review(conn, project, lines, request.form, max(0, request.form.get("dnp", 0, type=int)), errors)
+    accepted = len(lines) - skipped
+    if totals:
+        with conn:
+            conn.executemany("INSERT INTO project_items(project_id, item_id, quantity, per_build) VALUES (?, ?, 0, ?) ON CONFLICT(project_id, item_id) DO UPDATE SET per_build=excluded.per_build",
+                             [(project_id, item_id, per_build) for item_id, per_build in totals.items()])
+        merged = accepted - len(totals)
+        flash(f"Added {accepted} line{'' if accepted == 1 else 's'}, skipped {skipped}."
+              + (f" {merged} shared an item and were added together." if merged else "") + " Stock is only taken when you build.", "success")
+    else:
+        flash("Nothing added: every line was skipped.", "success")
+    return back_to_project(project_id)
 
 @app.route("/projects/<int:project_id>/lines/<int:item_id>", methods=["POST"])
 def update_project_line(project_id, item_id):

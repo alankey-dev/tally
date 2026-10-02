@@ -9,7 +9,10 @@ def normalise(text):
 
 
 def score(query, text):
-    wanted, words = normalise(query), normalise(text)
+    return score_tokens(normalise(query), normalise(text))
+
+
+def score_tokens(wanted, words):
     if not wanted or not words:
         return 0
     matches = []
