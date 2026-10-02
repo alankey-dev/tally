@@ -4,7 +4,7 @@
 
 <p align="center"><img src="docs/screenshot.png" alt="Tally dashboard" width="900"></p>
 
-Tally is a self-hosted inventory for an electronics workshop. One container, one SQLite file, no accounts, works on a phone at the bench.
+Tally is a self-hosted inventory for an electronics workshop. One container, one SQLite file, no accounts, works on a phone at the bench. Releases are published as `ghcr.io/alankey-dev/tally` images.
 
 [MIT licensed](LICENSE).
 
