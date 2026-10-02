@@ -1,0 +1,128 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}Order list · Tally{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Order list</h1>
+    <p class="lede">Low stock and project shortages, ready to take to a distributor.</p>
+  </div>
+  {% if exports_enabled and wanted %}
+  <div class="page-actions">
+    <a class="button" href="{{url_for('export_orders', format='csv')}}">{{ icon('download') }}CSV</a>
+  </div>
+  {% endif %}
+</section>
+
+<form id="add-suggested" method="post" action="{{url_for('add_order_entries')}}"></form>
+<form id="mark-ordered" method="post" action="{{url_for('mark_ordered')}}"></form>
+
+<div class="section-head"><h2>Suggested</h2><span class="badge neutral">{{suggested|length}}</span></div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th></th><th>Component</th><th class="num">On hand</th><th class="num">Minimum</th><th class="num">Order</th></tr></thead>
+    <tbody>
+      {% for item, amount in suggested %}
+      <tr>
+        <td><input type="checkbox" name="item_id" value="{{item['id']}}" form="add-suggested" aria-label="Add {{item['name']}}"></td>
+        <td data-label="Component"><a href="{{url_for('item_detail', item_id=item['id'])}}">{{item['name']}}</a><br><small><code>{{item['code']}}</code></small></td>
+        <td data-label="On hand" class="num">{{item['quantity']|qty}} {{item['unit']}}</td>
+        <td data-label="Minimum" class="num">{{item['minimum_quantity']|qty}} {{item['unit']}}</td>
+        <td data-label="Order" class="num"><input name="quantity_{{item['id']}}" type="number" min="0.001" step="any" value="{{amount}}" form="add-suggested" aria-label="Quantity of {{item['name']}} to order"></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5"><div class="empty">Nothing is low, or everything low is already on the list.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if suggested %}<p><button class="button primary" form="add-suggested">Add selected</button></p>{% endif %}
+
+<div class="section-head"><h2>Add an item</h2></div>
+<form class="search" role="search">
+  <div class="search-field">{{ icon('search') }}<input name="q" value="{{query}}" placeholder="Search components" aria-label="Search components"></div>
+  <button>Find</button>
+</form>
+{% if query %}
+<div class="project-search-results">
+  {% for item in results %}
+  <form method="post" action="{{url_for('add_order_entries')}}">
+    <input type="hidden" name="item_id" value="{{item['id']}}">
+    <strong>{{item['name']}}</strong>
+    <small>{{item['quantity']|qty}} {{item['unit']}} on hand · <code>{{item['code']}}</code></small>
+    <label class="inline-qty">Quantity<input name="quantity_{{item['id']}}" type="number" min="0.001" step="any" value="1" aria-label="Quantity of {{item['name']}} to order"></label>
+    <button class="button small">Add</button>
+  </form>
+  {% else %}
+  <div class="empty">No components found.</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="section-head"><h2>To order</h2><span class="badge neutral">{{wanted|length}}</span></div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th></th><th>Component</th><th>Source</th><th class="num">On hand</th><th class="num">Quantity</th><th></th></tr></thead>
+    <tbody>
+      {% for entry in wanted %}
+      <tr>
+        <td><input type="checkbox" name="entry_id" value="{{entry['id']}}" form="mark-ordered" aria-label="Mark {{entry['name']}} ordered"></td>
+        <td data-label="Component"><a href="{{url_for('item_detail', item_id=entry['item_id'])}}">{{entry['name']}}</a><br><small><code>{{entry['code']}}</code> · {{entry['part_number'] or 'No part number'}}</small></td>
+        <td data-label="Source"><span class="badge neutral">{{entry['source']}}</span></td>
+        <td data-label="On hand" class="num">{{entry['on_hand']|qty}} {{entry['unit']}}</td>
+        <td data-label="Quantity" class="num"><form class="inline-qty" method="post" action="{{url_for('update_order_entry', entry_id=entry['id'])}}"><input name="quantity" type="number" min="0.001" step="any" value="{{entry['quantity']|qty}}" aria-label="Quantity of {{entry['name']}} to order"><button class="button small">Save</button></form></td>
+        <td class="actions"><form method="post" action="{{url_for('delete_order_entry', entry_id=entry['id'])}}"><button class="button small quiet danger">Remove</button></form></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6"><div class="empty">Nothing waiting to be ordered.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if wanted %}
+<div class="card">
+  <h2>Mark ordered</h2>
+  <p class="copy card-intro">Tick the entries you ordered, then say where from.</p>
+  <div class="form-grid">
+    <label>Supplier<input name="supplier" form="mark-ordered" autocomplete="off"></label>
+    <label>Order number<input name="order_ref" form="mark-ordered" autocomplete="off"></label>
+    <label>Expected on<input name="expected_on" type="date" form="mark-ordered"></label>
+  </div>
+  <button class="button primary" form="mark-ordered">Mark ordered</button>
+</div>
+{% if exports_enabled %}
+<div class="card">
+  <h2>Mouser part list</h2>
+  <p class="copy card-intro">Paste this into Mouser's part-list tool.</p>
+  <textarea id="mouser-text" class="order-text" readonly rows="{{[mouser.count('\n') + 1, 4]|max}}" aria-label="Mouser part list">{{mouser}}</textarea>
+  <button type="button" class="button" data-copy="#mouser-text" hidden>Copy</button>
+  {% if skipped %}<p class="copy">Left out, no part number: {{skipped|join(', ')}}.</p>{% endif %}
+</div>
+{% endif %}
+{% endif %}
+
+<div class="section-head"><h2>On order</h2></div>
+{% for supplier, entries in suppliers.items() %}
+<div class="card">
+  <h3>{{supplier or 'No supplier'}}</h3>
+  <div class="record-list">
+    {% for entry in entries %}
+    <div class="record">
+      <div>
+        <strong><a href="{{url_for('item_detail', item_id=entry['item_id'])}}">{{entry['name']}}</a></strong>
+        <small>{{entry['quantity']|qty}} {{entry['unit']}}{% if entry['order_ref'] %} · order {{entry['order_ref']}}{% endif %}{% if entry['expected_on'] %} · expected {{entry['expected_on']|expected_date}}{% endif %} {% if entry['expected_on'] and entry['expected_on'] < today %}<span class="badge warn">Late</span>{% endif %}</small>
+      </div>
+      <form class="form" method="post" action="{{url_for('receive_order_entry', entry_id=entry['id'])}}">
+        <details><summary>Received</summary>
+          <label>Quantity<input name="quantity" type="number" min="0.001" step="any" value="{{entry['quantity']|qty}}"></label>
+          <button class="button small primary">Received</button>
+        </details>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="empty">Nothing on order.</div>
+{% endfor %}
+{% endblock %}

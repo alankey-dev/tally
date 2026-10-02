@@ -8,4 +8,4 @@ Only the latest release receives fixes.
 
 - Tally has a single shared access password, not user accounts. Set one in **Settings** and require sign-in before anyone else can reach the app.
 - Serve it over HTTPS through a reverse proxy (Caddy, Traefik, nginx) if it is reachable from outside your network.
-- The data volume holds the database, uploaded images and, unless you set `SECRET_KEY`, the session signing key. Back it up and keep it private.
+- The data volume holds the database, uploaded images, attachments and, unless you set `SECRET_KEY`, the session signing key. Back it up and keep it private.

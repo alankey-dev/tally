@@ -19,13 +19,19 @@
     <p class="copy">The family decides which details are worth recording.</p>
     <label>Item name<input required name="name" id="item-name" value="{{request.form.get('name', suggested_name)}}" autofocus placeholder="e.g. Seeed Studio XIAO ESP32-C3"></label>
     <label>Component family<select name="family" id="item-family">{% for key, family in families.items() %}<option value="{{key}}" data-home="{{family_homes.get(key, '')}}"{% if key == selected_family %} selected{% endif %}>{{family['label']}}</option>{% endfor %}</select></label>
+    <div class="form-grid">
+      <label>Manufacturer <span class="optional">optional</span><input name="manufacturer" id="item-manufacturer" value="{{request.form.get('manufacturer', suggested_manufacturer)}}" placeholder="e.g. Seeed Studio"></label>
+      <label>Part number <span class="optional">optional</span><input name="part_number" id="item-part-number" value="{{request.form.get('part_number', suggested_part_number)}}" placeholder="e.g. NE555P"></label>
+    </div>
+    <input type="hidden" name="supplier" value="{{scanned['supplier']}}">
+    <input type="hidden" name="supplier_sku" value="{{scanned['supplier_sku']}}">
     <div id="family-fields">
       {% for family_key, family in families.items() %}
       <fieldset class="guided-fields" data-family="{{family_key}}"{% if family_key != selected_family %} hidden{% endif %}>
         <legend>{{family['label']}} details</legend>
         <div class="form-grid">
           {% for field in family['fields'] %}{% set key = field[0] %}{% set label = field[1] %}{% set field_type = field[2] %}{% set config = field[3] %}
-          <label>{{label}}{% if field_type == 'select' %}<select name="attr_{{key}}" data-attribute="{{key}}"><option value="">Choose…</option>{% for option in config %}<option value="{{option}}"{% if suggested_attributes.get(key) == option %} selected{% endif %}>{{option}}</option>{% endfor %}</select>{% else %}<input name="attr_{{key}}" data-attribute="{{key}}" type="{{field_type}}" value="{{suggested_manufacturer if key == 'manufacturer' else suggested_part_number if key == 'part_number' else suggested_attributes.get(key, '')}}" placeholder="{{config}}"{% if field_type == 'number' %} step="any" inputmode="decimal"{% endif %}>{% endif %}</label>
+          <label>{{label}}{% if field_type == 'select' %}<select name="attr_{{key}}" data-attribute="{{key}}"><option value="">Choose…</option>{% for option in config %}<option value="{{option}}"{% if suggested_attributes.get(key) == option %} selected{% endif %}>{{option}}</option>{% endfor %}</select>{% else %}<input name="attr_{{key}}" data-attribute="{{key}}" type="{{field_type}}" value="{{suggested_attributes.get(key, '')}}" placeholder="{{config}}"{% if field_type == 'number' %} step="any" inputmode="decimal"{% endif %}>{% endif %}</label>
           {% endfor %}
         </div>
       </fieldset>
@@ -37,7 +43,7 @@
     <h2>Stock</h2>
     <p class="copy">How many you have right now and how they are counted.</p>
     <div class="form-grid">
-      <label>Quantity<input name="quantity" type="number" step="any" min="0" inputmode="decimal" value="{{request.form.get('quantity', '0')}}"></label>
+      <label>Quantity<input name="quantity" type="number" step="any" min="0" inputmode="decimal" value="{{request.form.get('quantity', request.args.get('quantity', '0'))}}"></label>
       <label>Unit<input name="unit" value="{{request.form.get('unit', 'pcs')}}" placeholder="pcs, m, reel"></label>
     </div>
     <label>Component image or SVG <span class="optional">optional</span><input name="image" type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"></label>

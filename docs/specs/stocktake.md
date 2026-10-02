@@ -4,7 +4,7 @@ Once this ships, you can stand at a drawer or box with your phone, open its stor
 
 | Status | Research score | Depends on |
 | --- | --- | --- |
-| Proposed | 21/30, ranked 7 of 8 | Nothing new |
+| Shipped | 21/30, ranked 7 of 8 | Nothing new |
 
 ## Why
 

@@ -4,7 +4,7 @@ Once this ships, you can print a sheet or roll of labels for your storage locati
 
 | Status | Research score | Depends on |
 | --- | --- | --- |
-| Proposed | 25/30, ranked 3 of 8 | Nothing new |
+| Shipped | 25/30, ranked 3 of 8 | Nothing new |
 
 ## Why
 

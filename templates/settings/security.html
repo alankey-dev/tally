@@ -14,6 +14,7 @@
 
 <div class="card">
   <h2>Backups</h2>
-  <p class="copy">Download a SQLite backup before migrations or maintenance.</p>
+  <p class="copy">Download a SQLite backup before migrations or maintenance, or a zip of the database and every uploaded file.</p>
   <a class="button" href="{{url_for('download_backup')}}">{{ icon('download') }}Download backup</a>
+  <a class="button" href="{{url_for('download_full_backup')}}">{{ icon('download') }}Download full backup</a>
 </div>

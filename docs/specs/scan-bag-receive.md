@@ -4,7 +4,7 @@ Once this ships, you can receive a parcel by scanning the 2D code on each distri
 
 | Status | Research score | Depends on |
 | --- | --- | --- |
-| Proposed | 26/30, ranked 2 of 8 | Nothing new |
+| Shipped | 26/30, ranked 2 of 8 | Nothing new |
 
 ## Why
 

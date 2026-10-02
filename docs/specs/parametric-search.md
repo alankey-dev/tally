@@ -4,7 +4,7 @@ Once this ships, you can find a part by what it is as well as by what it is call
 
 | Status | Research score | Depends on |
 | --- | --- | --- |
-| Proposed | 21/30, ranked 8 of 8 | Nothing new |
+| Shipped | 21/30, ranked 8 of 8 | Nothing new |
 
 ## Why
 

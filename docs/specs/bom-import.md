@@ -4,7 +4,7 @@ Once this ships, you can upload the BOM CSV that KiCad, EasyEDA or JLCPCB toolin
 
 | Status | Research score | Depends on |
 | --- | --- | --- |
-| Proposed | 23/30, ranked 4 of 8 | Nothing new |
+| Shipped | 23/30, ranked 4 of 8 | Nothing new |
 
 ## Why
 

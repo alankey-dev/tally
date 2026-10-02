@@ -4,7 +4,7 @@ Once this ships, the dashboard's low-stock flag becomes a list you can act on. A
 
 | Status | Research score | Depends on |
 | --- | --- | --- |
-| Proposed | 23/30, ranked 5 of 8 | Nothing new |
+| Shipped | 23/30, ranked 5 of 8 | Nothing new |
 
 ## Why
 

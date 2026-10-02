@@ -23,7 +23,7 @@
 <section class="metrics" aria-label="Inventory summary">
   <a class="metric" href="{{url_for('items')}}"><span>Components</span><strong>{{stats['items']}}</strong></a>
   <a class="metric" href="{{url_for('locations')}}"><span>Storage locations</span><strong>{{stats['locations']}}</strong></a>
-  <a class="metric {{'warning' if stats['low_stock']}}" href="#low-stock"><span>Low stock</span><strong>{{stats['low_stock']}}</strong></a>
+  <a class="metric {{'warning' if low_count}}" href="#low-stock"><span>Low stock</span><strong>{{low_count}}</strong></a>
 </section>
 
 <section class="dashboard-grid">
@@ -31,7 +31,7 @@
     <div class="card" id="low-stock">
       <div class="card-head">
         <h2>Low stock</h2>
-        <a href="{{url_for('stock')}}">Open stock</a>
+        <span><a href="{{url_for('order_list')}}">Order list</a> · <a href="{{url_for('stock')}}">Open stock</a></span>
       </div>
       {% if low %}
       <div class="record-list">
@@ -41,12 +41,34 @@
             <strong>{{item['name']}}</strong>
             <small><code>{{item['code']}}</code> · minimum {{item['minimum_quantity']|qty}} {{item['unit']}}</small>
           </div>
+          {% if item['id'] in ordered %}<span class="badge neutral">On order</span>{% endif %}
           {{ qty(item) }}
         </a>
         {% endfor %}
       </div>
       {% else %}
       <div class="empty">Everything with a minimum is covered.</div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Due a count</h2>
+        <span>{{due_count}} · <a href="{{url_for('locations')}}">Storage</a></span>
+      </div>
+      {% if due %}
+      <div class="record-list">
+        {% for location in due %}
+        <a class="record" href="{{url_for('count_location', location_id=location['id'])}}">
+          <div>
+            <strong><code>{{location['code']}}</code> {{location['label']}}</strong>
+            <small>{{location['item_count']}} {{'item' if location['item_count'] == 1 else 'items'}} · {{'never counted' if not location['oldest'] else 'oldest count ' ~ location['oldest'][:10]}}</small>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty">Every storage location has been counted recently.</div>
       {% endif %}
     </div>
 

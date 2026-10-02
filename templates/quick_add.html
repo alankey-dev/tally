@@ -17,11 +17,12 @@
   <div class="search large keep-button">
     <div class="search-field">
       {{ icon('search') }}
-      <input type="search" id="quick-query" name="q" value="{{query}}" placeholder="ESP32, Seeed XIAO, 100nF capacitor…" autocomplete="off" maxlength="200" autofocus>
+      <input type="search" id="quick-query" name="q" value="{{query}}" placeholder="ESP32, Seeed XIAO, 100nF capacitor…" autocomplete="off" maxlength="1000"{% if not selected %} autofocus{% endif %}>
     </div>
     <button class="primary">Find</button>
   </div>
 </form>
+<label class="button scan-button">{{ icon('camera') }}Scan a bag label<input class="visually-hidden" type="file" id="scan-photo" accept="image/*" capture="environment" data-loader="{{url_for('static', filename='vendor/zxing-wasm/index.js')}}" data-wasm="{{url_for('static', filename='vendor/zxing-wasm/zxing_reader.wasm')}}"></label>
 <p id="quick-status" role="status" class="quick-status"></p>
 
 {% if selected %}
@@ -33,10 +34,11 @@
   <input type="hidden" name="q" value="{{query}}">
   <input type="hidden" name="csrf" value="{{session['quick_csrf']}}">
   <input type="hidden" name="token" value="{{token}}">
-  <label>Quantity to add ({{selected['unit']}})<input class="quantity-input" type="number" name="quantity" value="1" step="any" inputmode="decimal" required autofocus></label>
+  {% for key in ('supplier', 'supplier_sku', 'expected', 'scan') %}{% if scan.get(key) %}<input type="hidden" name="{{key}}" value="{{scan[key]}}">{% endif %}{% endfor %}
+  <label>Quantity to add ({{selected['unit']}})<input class="quantity-input" type="number" name="quantity" value="{{scan.get('quantity', 1)}}" step="any" inputmode="decimal" required autofocus></label>
   <div class="form-actions">
     <button class="button primary">{{ icon('check') }}Add stock</button>
-    <a class="button quiet" href="{{url_for('quick_add', q=query)}}">Back to matches</a>
+    <a class="button quiet" href="{{url_for('quick_add', q=query, **scan)}}">Back to matches</a>
   </div>
 </form>
 {% else %}

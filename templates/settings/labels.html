@@ -1,0 +1,12 @@
+<div class="card">
+  <h2>Labels</h2>
+  <p class="copy">Printed QR codes open this address, so a phone must be able to reach it. Leave it empty to use the address of the page you are on.</p>
+  <form method="post" action="{{url_for('update_labels')}}" class="password-form">
+    <label>Label address <span class="optional">optional</span><input name="base_url" type="url" value="{{base_url}}" placeholder="https://tally.example.lan"></label>
+    <label>Default label size<select name="preset">
+      {% for key, item in presets.items() %}<option value="{{key}}"{% if key == preset %} selected{% endif %}>{{item['name']}}</option>{% endfor %}
+    </select></label>
+    <button class="button primary">Save label settings</button>
+  </form>
+  <p class="copy">QR codes will open <code>{{address}}</code> {% if warning %}<span class="badge warn">{{warning}}</span>{% endif %}</p>
+</div>

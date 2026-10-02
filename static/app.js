@@ -34,7 +34,7 @@
       const names = {
         capacitor: [valueFor('value'), valueFor('value_unit'), valueFor('capacitor_type'), 'capacitor'],
         resistor: [valueFor('value'), valueFor('value_unit'), valueFor('tolerance'), valueFor('power'), 'resistor'],
-        microcontroller: [valueFor('manufacturer'), valueFor('variant'), valueFor('chip')],
+        microcontroller: [guidedForm.querySelector('#item-manufacturer')?.value.trim() || '', valueFor('variant'), valueFor('chip')],
         led: [valueFor('colour'), valueFor('package'), valueFor('led_type'), 'LED'],
         connector: [valueFor('series'), valueFor('positions') && `${valueFor('positions')}-pin`, valueFor('gender'), 'connector'],
         sensor: [valueFor('model'), valueFor('measures'), 'sensor'],
@@ -43,6 +43,7 @@
       const nextName = (names[family] || []).filter(Boolean).join(' ');
       if (nextName) itemName.value = nextName;
     };
+    guidedForm.querySelector('#item-manufacturer')?.addEventListener('input', refreshName);
     guidedForm.querySelectorAll('[data-attribute]').forEach(field => field.addEventListener('input', refreshName));
     familySelect.addEventListener('change', () => {
       generatedName = broadNames.has(itemName.value.trim().toLowerCase()) || generatedName;
@@ -85,7 +86,7 @@
         suggestions.replaceChildren(...results.map(result => {
           const link = document.createElement('a');
           link.href = `/items/${result.id}`;
-          link.innerHTML = `<strong>${escapeHtml(result.name)}</strong><span>${escapeHtml(result.code)} · ${escapeHtml(result.label)}</span>`;
+          link.innerHTML = `<strong>${escapeHtml(result.name)}</strong><span>${result.summary ? escapeHtml(result.summary) + ' · ' : ''}${escapeHtml(result.code)} · ${escapeHtml(result.label)}</span>`;
           return link;
         }));
         suggestions.hidden = results.length === 0;
@@ -110,7 +111,7 @@
       try {
         const {version} = await (await fetch('/api/version', {cache: 'no-store'})).json();
         if (currentVersion && currentVersion !== version) {
-          if (document.activeElement.matches('input, textarea, select') || document.querySelector('dialog[open]')) return;
+          if (document.activeElement.matches('input, textarea, select') || [...document.querySelectorAll('input[type=file]')].some((input) => input.files.length) || document.querySelector('dialog[open]')) return;
           window.location.reload();
         }
         currentVersion = version;
@@ -139,12 +140,20 @@
         row.querySelector('[data-status]').innerHTML = missing > 1e-9 ? `<span class="badge danger">Short ${formatQuantity(missing)}</span>` : '<span class="badge neutral">Covered</span>';
       });
       build.disabled = short || !lines.length;
+      planner.querySelectorAll('[data-order-shortages]').forEach(button => button.disabled = !short);
     };
     wanted.addEventListener('input', update);
     // Browsers restore a typed count without an input event on reload or history navigation.
     window.addEventListener('pageshow', update);
     update();
   }
+
+  // Copy button for the Mouser text: shown only where the clipboard API exists (not on plain HTTP).
+  document.querySelectorAll('[data-copy]').forEach(button => {
+    if (!(window.isSecureContext && navigator.clipboard)) return;
+    button.hidden = false;
+    button.addEventListener('click', () => navigator.clipboard.writeText(document.querySelector(button.dataset.copy).value));
+  });
 
   const menuToggle = document.querySelector('[data-menu-toggle]');
   const sheet = document.querySelector('[data-menu-sheet]');
@@ -221,4 +230,32 @@
     });
     renderCart();
   }
+
+  if (document.body.hasAttribute('data-stocktake')) {
+    document.querySelectorAll('tr[data-expected]').forEach(row => {
+      const field = row.querySelector('.count-input'); const tick = row.querySelector('input[type="checkbox"]'); const expected = Number(row.dataset.expected);
+      const show = () => {
+        const out = row.querySelector('[data-variance]'); const diff = Number(field.value) - expected;
+        if (field.value === '' || !Number.isFinite(diff) || Math.abs(diff) < 1e-9) { out.innerHTML = ''; return; }
+        out.innerHTML = `<span class="badge ${diff > 0 ? 'neutral' : 'warn'}">${diff > 0 ? '+' : '-'}${formatQuantity(Math.abs(diff))}</span>`;
+      };
+      tick.addEventListener('change', () => { field.readOnly = tick.checked; if (tick.checked) field.value = row.dataset.expected; show(); });
+      field.addEventListener('input', show);
+    });
+    document.querySelector('form[method="post"]')?.addEventListener('submit', event => {
+      const bad = [...document.querySelectorAll('.count-input')].filter(field => field.validity.badInput);
+      bad.forEach(field => field.setAttribute('aria-invalid', 'true'));
+      if (bad.length) { event.preventDefault(); bad[0].focus(); }
+    });
+  }
+
+  document.querySelectorAll('form[data-max-bytes]').forEach(form => form.addEventListener('submit', event => {
+    const file = form.querySelector('input[type="file"]').files[0];
+    const limit = Number(form.dataset.maxBytes);
+    if (!file || file.size <= limit) return;
+    event.preventDefault();
+    let note = form.querySelector('[data-size-error]');
+    if (!note) { note = document.createElement('small'); note.className = 'danger-text'; note.dataset.sizeError = ''; note.setAttribute('role', 'alert'); form.querySelector('input[type="file"]').after(note); }
+    note.textContent = `Files can be up to ${Math.round(limit / 1048576)} MB.`;
+  }));
 })();

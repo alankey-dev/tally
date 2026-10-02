@@ -14,9 +14,17 @@
   </div>
 </section>
 
+{% if location %}
+<a class="back" href="{{url_for('stock')}}">{{ icon('back', 'small') }}All stock</a>
+<div class="storage-heading">
+  <h2><code>{{location['code']}}</code> {{location['label']}}</h2>
+</div>
+{% endif %}
+
 <div class="stock-layout">
   <section>
     <form class="search" autocomplete="off" aria-label="Search stock" role="search">
+      {% if location %}<input type="hidden" name="location" value="{{location['id']}}">{% endif %}
       <div class="search-field">
         {{ icon('search') }}
         <input id="inventory-search" name="q" value="{{query}}" placeholder="Search components while you work">
@@ -36,7 +44,7 @@
         </div>
       </article>
       {% else %}
-      <div class="empty">No matching components.</div>
+      <div class="empty">No matching components.{% if location and can_add and not query %} <a href="{{url_for('new_item', location=location['id'])}}">Add component here</a>{% endif %}</div>
       {% endfor %}
     </div>
   </section>
@@ -44,6 +52,7 @@
   <aside class="card checkout-card" data-stock-checkout data-selected-id="{{selected_id or ''}}">
     <form method="post" action="{{url_for('stock_checkout')}}">
       <input type="hidden" name="cart" value="[]">
+      {% if location %}<input type="hidden" name="location" value="{{location['id']}}">{% endif %}
       <div class="card-head">
         <h2>Checkout list</h2>
         <span class="badge neutral" data-cart-count>0 items</span>

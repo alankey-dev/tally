@@ -1,9 +1,11 @@
 {
   "scripts": {
-    "build:css": "tailwindcss -i static/tailwind.css -o static/tailwind.generated.css --minify"
+    "build:css": "tailwindcss -i static/tailwind.css -o static/tailwind.generated.css --minify",
+    "vendor:zxing": "mkdir -p static/vendor/zxing-wasm && cp node_modules/zxing-wasm/dist/iife/reader/index.js node_modules/zxing-wasm/dist/reader/zxing_reader.wasm node_modules/zxing-wasm/LICENSE static/vendor/zxing-wasm/"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.3",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^4.3.3",
+    "zxing-wasm": "3.1.4"
   }
 }

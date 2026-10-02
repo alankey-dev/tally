@@ -31,6 +31,7 @@
   <label class="inline-qty">Build<input name="quantity" type="number" min="1" max="{{max_builds}}" step="1" value="{{wanted}}" required autocomplete="off" aria-label="Number of builds"></label>
   <button class="button" formmethod="get" formaction="{{url_for('project_detail', project_id=project['id'])}}" formnovalidate>Check stock</button>
   <button class="button primary"{% if not plan or short_lines %} disabled{% endif %}>{{ icon('swap') }}Build <span data-build-count>×{{wanted}}</span></button>
+  {% if plan %}<button class="button" formaction="{{url_for('order_shortages', project_id=project['id'])}}" data-order-shortages{% if not short_lines %} disabled{% endif %}>{{ icon('cart') }}Add shortages to order list</button>{% endif %}
   {% if short_lines and buildable %}<small>Stock covers <a href="{{url_for('project_detail', project_id=project['id'], quantity=buildable if buildable > 1 else None)}}">×{{buildable}}</a>.</small>{% endif %}
 </form>
 <div class="table-wrap">
@@ -79,6 +80,14 @@
       {% endfor %}
     </div>
     {% endif %}
+    <div class="bom-import">
+      <h2>Import a BOM</h2>
+      <p class="copy card-intro">Upload the CSV your CAD tool exports. You review the matches before anything is added.</p>
+      <form method="post" action="{{url_for('import_bom', project_id=project['id'])}}" enctype="multipart/form-data" class="project-search">
+        <input type="file" name="file" accept=".csv,.tsv,.txt,text/csv,text/comma-separated-values,text/tab-separated-values,application/vnd.ms-excel,text/plain" required aria-label="BOM file">
+        <button class="button primary">{{ icon('file') }}Import</button>
+      </form>
+    </div>
   </aside>
   <div>
     <div class="section-head"><h2>Builds</h2></div>
