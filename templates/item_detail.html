@@ -21,6 +21,7 @@
   <a class="button primary" href="{{url_for('stock', add=item['id'])}}">{{ icon('swap') }}Use in stock checkout</a>
   <a class="button" href="{{url_for('quick_add', q=item['name'], item=item['id'])}}">{{ icon('zap') }}Receive stock</a>
   <a class="button" href="{{url_for('locations', q=item['code'])}}">{{ icon('archive') }}Find the drawer</a>
+  {% if exports_enabled %}<a class="button" target="_blank" href="{{url_for('item_label_pdf', item_id=item['id'])}}">{{ icon('download') }}Print label</a>{% endif %}
 </div>
 
 {% if attributes or item['family'] != 'generic' or item['supplier_sku'] %}

@@ -25,6 +25,10 @@ Bag labels are read by `parse_bag_label` in `app/bag_labels.py`. Add a branch th
 
 Photo decoding uses [zxing-wasm](https://github.com/Sec-ant/zxing-wasm), copied into `static/vendor/zxing-wasm/` and committed, so running Tally needs no build step. After changing the pinned version in `package.json`, run `npm install && npm run vendor:zxing` and commit the result.
 
+## Adding a label size
+
+Label sizes are the entries of `LABEL_PRESETS` in `app/main.py`. Each gives the page size, columns, rows, label size, top-left margin and gap between labels, all in millimetres. A roll is one label per page, with the page the same size as the label. Print a test sheet with **Draw outlines for a test print** ticked, at 100% scale, and check the outlines sit on your label edges.
+
 ## Sharing a storage layout
 
 Layouts are JSON files in `app/layouts/`. Each location needs a `code` and a `label`, and can also have a `kind` and search `keywords`. `groups` names the code prefixes, and `family_homes` maps a component family to the location where new parts of that family go by default. See `example.json`.

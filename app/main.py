@@ -17,6 +17,11 @@ from flask import Flask, abort, flash, g, jsonify, redirect, render_template, re
 from werkzeug.security import check_password_hash, generate_password_hash
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.lib.units import mm
+from reportlab.graphics import renderPDF
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.barcode.qr import QrCodeWidget
 from app.webhooks import init_outbox, enqueue_event, start_worker
 from app import providers as part_providers
 from app.matching import ranked, suggested_homes
@@ -196,7 +201,7 @@ def ensure_database():
     public_endpoints = {"access", "logout", "static"}
     if auth_enabled() and request.endpoint not in public_endpoints and (not password or session.get("access_unlocked") != access_token(password["value"])):
         return redirect(url_for("access", next=request.full_path))
-    restricted = {"new_item": "add_components", "export_inventory": "exports", "export_bom": "exports"}
+    restricted = {"new_item": "add_components", "export_inventory": "exports", "export_bom": "exports", "location_labels_pdf": "exports", "item_label_pdf": "exports"}
     if request.endpoint in restricted and not enabled(restricted[request.endpoint]):
         abort(403)
     if request.endpoint == "item_detail" and request.method == "POST" and not enabled("edit_components"):
@@ -213,7 +218,7 @@ def format_quantity(value):
 
 @app.context_processor
 def feature_context():
-    return {"images_enabled": enabled("images"), "auth_enabled": auth_enabled()}
+    return {"images_enabled": enabled("images"), "auth_enabled": auth_enabled(), "exports_enabled": enabled("exports")}
 
 def image_upload(field_name):
     """Save a user-supplied component/location image under an unguessable local name."""
@@ -231,6 +236,10 @@ def image_upload(field_name):
 def valid_webhook_url(value):
     parsed = urlparse(value)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc) and not parsed.username and not parsed.password
+
+def valid_base_url(value):
+    parsed = urlparse(value)
+    return valid_webhook_url(value) and not (parsed.query or parsed.fragment or parsed.params)
 
 def enabled(flag):
     row = db().execute("SELECT value FROM settings WHERE key=?", (f"feature.{flag}",)).fetchone()
@@ -352,15 +361,32 @@ def items():
 @app.route("/stock")
 def stock():
     query = request.args.get("q", "").strip()
+    location = None
+    if request.args.get("location", type=int) is not None:
+        location = db().execute("SELECT * FROM locations WHERE id=?", (request.args.get("location", type=int),)).fetchone()
+        if location is None:
+            flash("That storage location no longer exists.", "error")
+            return redirect(url_for("locations"))
     sql = "SELECT i.*, l.code, l.label AS location_label FROM items i JOIN locations l ON l.id=i.location_id"
-    args = []
+    where, args = [], []
     if query:
-        sql += " WHERE i.name LIKE ? OR i.part_number LIKE ? OR l.code LIKE ?"
+        where.append("(i.name LIKE ? OR i.part_number LIKE ? OR l.code LIKE ?)")
         args = [f"%{query}%"] * 3
+    if location:
+        where.append("l.id=?")
+        args.append(location["id"])
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY i.name COLLATE NOCASE"
     chosen = request.args.get("add", type=int)
     recent = db().execute("SELECT m.*, i.name, i.unit FROM movements m JOIN items i ON i.id=m.item_id ORDER BY m.occurred_at DESC LIMIT 10").fetchall()
-    return render_template("stock.html", items=db().execute(sql, args).fetchall(), query=query, selected_id=chosen, recent=recent)
+    return render_template("stock.html", items=db().execute(sql, args).fetchall(), query=query, selected_id=chosen, recent=recent, location=location, can_add=enabled("add_components"))
+
+def back_to_stock():
+    location = request.form.get("location", type=int)
+    if location is not None and db().execute("SELECT 1 FROM locations WHERE id=?", (location,)).fetchone():
+        return redirect(url_for("stock", location=location))
+    return redirect(url_for("stock"))
 
 @app.route("/stock/checkout", methods=["POST"])
 def stock_checkout():
@@ -371,7 +397,7 @@ def stock_checkout():
             raise ValueError()
     except (ValueError, TypeError, json.JSONDecodeError):
         flash("Add at least one component and choose a stock action.", "error")
-        return redirect(url_for("stock"))
+        return back_to_stock()
     direction = {"stock-in": 1, "stock-out": -1, "return": 1, "lost": -1}[action]
     labels = {"stock-in": ("Stock received", "stock.in"), "stock-out": ("Stock used", "stock.out"), "return": ("Stock returned", "stock.returned"), "lost": ("Marked lost or damaged", "stock.lost")}
     conn = db()
@@ -387,12 +413,12 @@ def stock_checkout():
             prepared.append((item, quantity))
     except (KeyError, ValueError, TypeError):
         flash("Check the quantities. Stock out and lost actions cannot take more than is on hand.", "error")
-        return redirect(url_for("stock"))
+        return back_to_stock()
     with conn:
         for item, quantity in prepared:
             record_movement(conn, item, direction * quantity, labels[action][0], labels[action][1])
     flash(f"{labels[action][0]} for {len(prepared)} component{'s' if len(prepared) != 1 else ''}.", "success")
-    return redirect(url_for("stock"))
+    return back_to_stock()
 
 @app.route("/api/search")
 def search():
@@ -635,6 +661,20 @@ def find_item(item_id):
     return redirect(url_for("item_detail", item_id=item_id))
 
 
+def drawer_order(row):
+    return ({'small drawer': 0, 'medium drawer': 1, 'large drawer': 2}.get(row['kind'], 3), row['code'])
+
+def select_locations(group="", q="", code=""):
+    """The storage rows a page or label sheet shows: one code, a search, or a group in drawer order."""
+    rows = db().execute("SELECT l.*, count(i.id) AS item_count FROM locations l LEFT JOIN items i ON i.location_id=l.id GROUP BY l.id ORDER BY l.code").fetchall()
+    if code:
+        return [row for row in rows if row['code'] == code]
+    if q:
+        return [row for row in rows if q.casefold() in (row['code'] + ' ' + row['label']).casefold()]
+    if group:
+        rows = [row for row in rows if row['code'].split()[0] == group]
+    return sorted(rows, key=drawer_order)
+
 @app.route("/locations")
 def locations():
     rows = db().execute("SELECT l.*, count(i.id) AS item_count FROM locations l LEFT JOIN items i ON i.location_id=l.id GROUP BY l.id ORDER BY l.code").fetchall()
@@ -646,11 +686,22 @@ def locations():
     groups = dict(sorted(groups.items(), key=lambda pair: (pair[0] not in names, list(names).index(pair[0]) if pair[0] in names else pair[0])))
     query = request.args.get('q', '').strip()
     active = request.args.get('group', '')
-    selected = groups.get(active, {}).get('rows', []) if active else rows
-    selected = sorted(selected, key=lambda row: ({'small drawer': 0, 'medium drawer': 1, 'large drawer': 2}.get(row['kind'], 3), row['code']))
-    if query:
-        selected = [row for row in rows if query.casefold() in (row['code'] + ' ' + row['label']).casefold()]
-    return render_template("locations.html", locations=selected, groups=groups, active=active, query=query)
+    selected = select_locations(active, query)
+    address = label_base_url() or request.host_url
+    return render_template("locations.html", locations=selected, groups=groups, active=active, query=query, presets=LABEL_PRESETS, default_preset=default_preset(), label_address=address, label_warning=label_address_warning(address))
+
+@app.route("/l/<path:code>")
+def scan_location(code):
+    """The address in a drawer's QR code: open that drawer's stock, forgiving of letter case."""
+    conn = db()
+    row = conn.execute("SELECT id FROM locations WHERE code=?", (code,)).fetchone()
+    if row is None:
+        rows = conn.execute("SELECT id FROM locations WHERE code=? COLLATE NOCASE", (code,)).fetchall()
+        row = rows[0] if len(rows) == 1 else None
+    if row is None:
+        flash(f"No storage location has the code {code}.", "error")
+        return redirect(url_for("locations", q=code))
+    return redirect(url_for("stock", location=row["id"]))
 
 @app.route("/locations/new", methods=["POST"])
 def new_location():
@@ -873,6 +924,115 @@ def export_inventory(format):
     rows = db().execute("SELECT i.name, i.manufacturer, i.part_number, i.quantity, i.unit, i.minimum_quantity, l.code FROM items i JOIN locations l ON l.id=i.location_id ORDER BY i.name COLLATE NOCASE").fetchall()
     return export_rows(rows, ["Component", "Manufacturer", "Part number", "On hand", "Unit", "Minimum", "Location"], "tally-inventory", format, "Inventory report")
 
+LABEL_PRESETS = {
+    # Sizes are millimetres. Sheets give columns, rows, label size, the top-left margin and the gap between labels.
+    "a4-3x7": {"name": "A4 sheet, 3 × 7 labels of 63.5 × 38.1 mm", "page": (210, 297), "cols": 3, "rows": 7, "size": (63.5, 38.1), "margin": (9.75, 15.15), "gap": (0, 0)},
+    "a4-5x13": {"name": "A4 sheet, 5 × 13 labels of 38.1 × 21.2 mm", "page": (210, 297), "cols": 5, "rows": 13, "size": (38.1, 21.2), "margin": (9.75, 10.7), "gap": (0, 0)},
+    "letter-3x10": {"name": "Letter sheet, 3 × 10 labels of 66.7 × 25.4 mm", "page": (215.9, 279.4), "cols": 3, "rows": 10, "size": (66.7, 25.4), "margin": (7.9, 12.7), "gap": (0, 0)},
+    "roll-62x29": {"name": "Roll, 62 × 29 mm", "page": (62, 29), "cols": 1, "rows": 1, "size": (62, 29), "margin": (0, 0), "gap": (0, 0)},
+    "roll-29x90": {"name": "Roll, 29 × 90 mm", "page": (29, 90), "cols": 1, "rows": 1, "size": (29, 90), "margin": (0, 0), "gap": (0, 0)},
+}
+
+def setting_value(key):
+    row = db().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else ""
+
+def label_base_url():
+    return setting_value("labels.base_url")
+
+def default_preset():
+    stored = setting_value("labels.preset")
+    return stored if stored in LABEL_PRESETS else next(iter(LABEL_PRESETS))
+
+def label_url(endpoint, **values):
+    base = label_base_url()
+    if not base:
+        return url_for(endpoint, _external=True, **values)
+    return base.rstrip("/") + url_for(endpoint, **values)
+
+def label_address_warning(address):
+    """Why phones may not reach the address the QR codes use, or an empty string."""
+    parsed = urlparse(address)
+    host = (parsed.hostname or "").lower()
+    if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        return "Phones cannot reach this address. Set the label address in Settings."
+    if "." not in host and ":" not in host:
+        return "This address has no domain, so some phones will not find it. Set the label address in Settings."
+    if parsed.scheme == "http" and request.headers.get("X-Forwarded-Proto") == "https":
+        return "Tally is served over https but this address is http. Set the label address in Settings."
+    return ""
+
+def fitted(text, font, size, width, minimum):
+    """Shrink text to fit the width, then cut it short with an ellipsis."""
+    while size > minimum and stringWidth(text, font, size) > width:
+        size -= 0.5
+    while len(text) > 1 and stringWidth(text, font, size) > width:
+        text = text.rstrip("…")[:-1].rstrip() + "…"
+    return text, size
+
+def draw_label(pdf, x, y, width, height, title, lines, url, outline):
+    """Draw one label with its box's bottom-left corner at x, y (all in points)."""
+    pad = 2.5 * mm
+    if outline:
+        pdf.setLineWidth(0.3)
+        pdf.rect(x, y, width, height)
+    qr_size = min(height - pad, width * 0.45)
+    widget = QrCodeWidget(url, barLevel="M")
+    x0, y0, x1, y1 = widget.getBounds()
+    drawing = Drawing(qr_size, qr_size, transform=[qr_size / (x1 - x0), 0, 0, qr_size / (y1 - y0), 0, 0])
+    drawing.add(widget)
+    renderPDF.draw(drawing, pdf, x + width - qr_size - pad / 2, y + (height - qr_size) / 2)
+    room = width - qr_size - pad * 1.5 - pad / 2
+    text, size = fitted(title, "Helvetica-Bold", min(height * 0.32, 24), room, 7)
+    top = y + height - pad
+    pdf.setFont("Helvetica-Bold", size)
+    pdf.drawString(x + pad, top - size, text)
+    top -= size * 1.3
+    for line in lines:
+        text, size = fitted(line, "Helvetica", min(height * 0.15, 9), room, 6)
+        top -= size * 1.2
+        if top < y:
+            break
+        pdf.setFont("Helvetica", size)
+        pdf.drawString(x + pad, top, text)
+
+def labels_pdf(labels, filename, skip=0):
+    """One PDF of labels on the chosen preset, which prints at actual size."""
+    preset = LABEL_PRESETS.get(request.args.get("preset"), LABEL_PRESETS[default_preset()])
+    outline = bool(request.args.get("outlines"))
+    per_sheet = preset["cols"] * preset["rows"]
+    skip = max(0, min(skip, per_sheet - 1))
+    page_w, page_h = (value * mm for value in preset["page"])
+    width, height = (value * mm for value in preset["size"])
+    output = BytesIO()
+    pdf = canvas.Canvas(output, pagesize=(page_w, page_h), pageCompression=1)
+    pdf.setViewerPreference("PrintScaling", "None")
+    for slot, (title, lines, url) in enumerate(labels, start=skip):
+        if slot and slot % per_sheet == 0:
+            pdf.showPage()
+        column, row = slot % per_sheet % preset["cols"], slot % per_sheet // preset["cols"]
+        x = (preset["margin"][0] + column * (preset["size"][0] + preset["gap"][0])) * mm
+        y = page_h - (preset["margin"][1] + row * (preset["size"][1] + preset["gap"][1])) * mm - height
+        draw_label(pdf, x, y, width, height, title, lines, url, outline)
+    pdf.save(); output.seek(0)
+    return send_file(output, mimetype="application/pdf", as_attachment=False, download_name=filename)
+
+@app.route("/locations/labels.pdf")
+def location_labels_pdf():
+    rows = select_locations(request.args.get("group", ""), request.args.get("q", "").strip(), request.args.get("code", ""))
+    if not rows:
+        abort(404)
+    labels = [(row["code"], [row["label"]], label_url("scan_location", code=row["code"])) for row in rows]
+    return labels_pdf(labels, "tally-location-labels.pdf", request.args.get("skip", 0, type=int))
+
+@app.route("/items/<int:item_id>/label.pdf")
+def item_label_pdf(item_id):
+    item = db().execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.id=?", (item_id,)).fetchone()
+    if not item:
+        abort(404)
+    lines = [value for value in (item["part_number"], item["code"]) if value]
+    return labels_pdf([(item["name"], lines, label_url("item_detail", item_id=item_id))], f"tally-item-{item_id}-label.pdf")
+
 def export_rows(rows, columns, filename, format, title):
     dispatch_webhooks("export.created", {"filename": f"{filename}.{format}", "format": format})
     if format == "csv":
@@ -906,7 +1066,7 @@ def export_rows(rows, columns, filename, format, title):
     pdf.save(); output.seek(0)
     return send_file(output, mimetype="application/pdf", as_attachment=True, download_name=f"{filename}.pdf")
 
-SETTINGS_SECTIONS = {"general": "General", "catalogue": "Catalogue", "providers": "Part search", "webhooks": "Webhooks", "security": "Access and backups"}
+SETTINGS_SECTIONS = {"general": "General", "labels": "Labels", "catalogue": "Catalogue", "providers": "Part search", "webhooks": "Webhooks", "security": "Access and backups"}
 
 @app.route("/settings")
 @app.route("/settings/<section>")
@@ -916,6 +1076,9 @@ def settings(section="general"):
     context = dict(section=section, sections=SETTINGS_SECTIONS)
     if section == "general":
         context["flags"] = {flag: enabled(flag) for flag in ("images", "add_components", "edit_components", "exports")}
+    elif section == "labels":
+        address = label_base_url() or request.host_url
+        context.update(base_url=label_base_url(), preset=default_preset(), presets=LABEL_PRESETS, address=address, warning=label_address_warning(address))
     elif section == "webhooks":
         context["webhook_events"] = WEBHOOK_EVENTS
         context["webhooks"] = db().execute("SELECT * FROM webhooks ORDER BY event, id").fetchall()
@@ -1007,6 +1170,18 @@ def update_features():
     dispatch_webhooks("settings.updated", {"section": "features"})
     flash("Feature settings saved.", "success")
     return redirect(url_for("settings"))
+
+@app.route("/settings/labels", methods=["POST"])
+def update_labels():
+    base_url, preset = request.form.get("base_url", "").strip().rstrip("/"), request.form.get("preset", "")
+    if (base_url and not valid_base_url(base_url)) or preset not in LABEL_PRESETS:
+        flash("Enter a label address like https://tally.example.lan, with no query or fragment, and choose a label size.", "error")
+    else:
+        set_setting("labels.base_url", base_url)
+        set_setting("labels.preset", preset)
+        dispatch_webhooks("settings.updated", {"section": "labels"})
+        flash("Label settings saved.", "success")
+    return redirect(url_for("settings", section="labels"))
 
 @app.route("/settings/access", methods=["POST"])
 def update_access_password():

@@ -12,6 +12,7 @@ Tally is a self-hosted inventory for an electronics workshop. One container, one
 
 - **Quick add.** Type what arrived, pick the matching variant, enter a count. Fuzzy matching forgives typos and spacing. Known parts come prefilled from a catalogue you can import from a file or URL in Settings.
 - **Scan to receive.** Scan the 2D code on a Digi-Key, Mouser, Farnell, LCSC or TME bag into Quick add. Tally reads the part number, quantity and supplier SKU, opens the receive form, and you press Enter. Unknown parts open New component prefilled. With no scanner, tap **Scan a bag label** and take a photo; this works over plain HTTP, with no HTTPS needed.
+- **Labels.** Print QR labels for drawers and parts; scan one with any phone camera to open that drawer's stock.
 - **Stock checkout.** Build a list, then record use, receipt, return, or loss in one action.
 - **Permanent homes.** Every part has a coded drawer or box. Search by name, part number, or location code.
 - **Low stock.** Set a minimum and the dashboard flags it.
@@ -45,8 +46,9 @@ The image runs on `amd64` and `arm64`, so a Raspberry Pi works too.
 ## First steps
 
 1. **Add your storage.** Under **Storage**, add each drawer, shelf or box with a short permanent code such as `CAB1 S01`. Codes are grouped by their first word.
-2. **Add parts.** Use **Quick add** at the bench: type what arrived, pick the variant, enter a count.
-3. **Lock it.** Under **Settings**, set an access password and require sign-in before anyone else can reach Tally.
+2. **Print labels for your storage.** Under **Storage**, choose **Print labels**, print the PDF at actual size and stick one on each drawer.
+3. **Add parts.** Use **Quick add** at the bench: type what arrived, pick the variant, enter a count.
+4. **Lock it.** Under **Settings**, set an access password and require sign-in before anyone else can reach Tally.
 
 Prefer to start from a ready-made layout? Set `TALLY_LAYOUT=example` before the first start for three 43-drawer cabinets and a set of boxes, or point it at your own JSON file (see [CONTRIBUTING.md](CONTRIBUTING.md#sharing-a-storage-layout)). It only applies while there is no storage yet.
 
@@ -61,6 +63,8 @@ Prefer to start from a ready-made layout? Set `TALLY_LAYOUT=example` before the 
 | `STORAGE_UPLOADS` | `/data/uploads` | Uploaded images. |
 
 Copy `.env.example` to `.env` to set these with Compose.
+
+QR labels open the address you reached Tally at, which a phone may not be able to use (`localhost`, or a bare hostname). Under **Settings → Labels**, set the label address, such as `https://tally.example.lan`. Tally warns before you print if the address looks unreachable.
 
 ## Exposing it to the internet
 

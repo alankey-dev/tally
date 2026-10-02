@@ -25,6 +25,11 @@ _Avoid_: Bin, category
 **Bag label**:
 A distributor's 2D code on a bag of parts. It carries the manufacturer part number, the quantity and the supplier SKU.
 
+**Label**:
+A printed sticker for a storage location or item, carrying its code and a QR code that opens it in Tally.
+_Avoid_: Tag, sticker
+A distributor's code on a parts bag is a **Bag label**, not a Label. The database column `locations.label` is the location's description, which the UI calls "Description".
+
 **Supplier SKU**:
 The distributor's order code for an item, kept for reordering.
 

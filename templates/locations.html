@@ -7,6 +7,7 @@
     <h1>Storage</h1>
   </div>
   <div class="page-actions">
+    {% if exports_enabled %}<button class="button" type="button" onclick="document.getElementById('print-labels').showModal()">{{ icon('download') }}{{'Print labels' if active or query else 'Print all labels'}}</button>{% endif %}
     <button class="button primary" type="button" onclick="document.getElementById('add-location').showModal()">{{ icon('plus') }}Add storage</button>
   </div>
 </section>
@@ -34,7 +35,8 @@
       <span class="badge neutral">{{location['item_count']}} {{'item' if location['item_count'] == 1 else 'items'}}</span>
     </summary>
     <div class="drawer-actions">
-      <a class="button small" href="{{url_for('stock', q=location['code'])}}">{{ icon('swap', 'small') }}View stock</a>
+      <a class="button small" href="{{url_for('stock', location=location['id'])}}">{{ icon('swap', 'small') }}View stock</a>
+      {% if exports_enabled %}<a class="button small" target="_blank" href="{{url_for('location_labels_pdf', code=location['code'])}}">{{ icon('download', 'small') }}Print label</a>{% endif %}
       <a class="button small" href="{{url_for('items', q=location['code'])}}">{{ icon('box', 'small') }}Components here</a>
       <a class="button small" href="{{url_for('new_item', location=location['id'])}}">{{ icon('plus', 'small') }}Add component here</a>
     </div>
@@ -75,4 +77,24 @@
     </div>
   </form>
 </dialog>
+{% if exports_enabled %}
+<dialog id="print-labels">
+  <form method="get" action="{{url_for('location_labels_pdf')}}" target="_blank" class="form">
+    <h2>{{'Print labels' if active or query else 'Print all labels'}}</h2>
+    <input type="hidden" name="group" value="{{active}}">
+    <input type="hidden" name="q" value="{{query}}">
+    <p class="copy">The QR codes open <code>{{label_address}}</code> {% if label_warning %}<span class="badge warn">{{label_warning}}</span>{% endif %}</p>
+    <label>Label size<select name="preset">
+      {% for key, preset in presets.items() %}<option value="{{key}}"{% if key == default_preset %} selected{% endif %}>{{preset['name']}}</option>{% endfor %}
+    </select></label>
+    <label>Labels to skip on a part-used sheet<input name="skip" type="number" min="0" value="0"></label>
+    <label class="check"><input name="outlines" type="checkbox" value="1"> Draw outlines for a test print</label>
+    <small class="hint">Print at 100% (actual size) from a computer. Draw outlines for a test print on plain paper.</small>
+    <div class="form-actions">
+      <button class="button primary">Make labels PDF</button>
+      <button type="button" class="button quiet" onclick="this.closest('dialog').close()">Cancel</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 {% endblock %}

@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import app.main as main
 
@@ -52,6 +53,20 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(other.get("/").status_code, 200)
         self.client.post("/settings/access", data={"password": "a different password"})
         self.assertIn("/access", other.get("/").location)
+
+    def test_scanned_label_returns_to_the_drawer_after_sign_in(self):
+        previous = main.LAYOUT
+        main.LAYOUT = "example"
+        self.addCleanup(setattr, main, "LAYOUT", previous)
+        self.client.get("/")  # seeds the layout while signed in
+        self.client.post("/logout")
+        other = main.app.test_client()
+        response = main.app.test_client().get("/l/C1%20S01")
+        self.assertEqual(urlparse(response.location).path, "/access")
+        self.assertEqual(parse_qs(urlparse(response.location).query)["next"], ["/l/C1 S01?"])
+        page = other.post(response.location, data={"password": "correct horse battery"}, follow_redirects=True)
+        self.assertIn("C1 S01", page.get_data(as_text=True))
+        self.assertIn("/stock", page.request.full_path)
 
 
 if __name__ == "__main__":
