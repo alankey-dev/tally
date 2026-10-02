@@ -80,7 +80,7 @@ def classify(query):
     return best_key if best_score >= .68 else "generic"
 
 
-def common_suggestions(query, entries, limit=6):
+def common_suggestions(query, entries, limit=12):
     scored = [(score(query, entry["name"] + " " + entry["manufacturer"] + " " + entry["part_number"]), entry) for entry in entries]
     return [entry for value, entry in sorted(scored, key=lambda row: -row[0]) if value >= .65][:limit]
 
