@@ -1,10 +1,10 @@
 # Future specs
 
-These are proposals a contributor can pick up later. None of them is built yet. They came from research across PartsBox, Part-DB, Binner, InvenTree, PartKeepr, Homebox and maker forums. Three judges then scored eight candidates out of 30 for demand, fit and impact. The build planner came first and has shipped. These are the other seven. Each one builds on what is in `main` today, including the build planner.
+These are proposals a contributor can pick up later. Most of them are not built yet. They came from research across PartsBox, Part-DB, Binner, InvenTree, PartKeepr, Homebox and maker forums. Three judges then scored eight candidates out of 30 for demand, fit and impact. The build planner came first and has shipped, and so has scan to receive. These are the other seven. Each one builds on what is in `main` today, including the build planner.
 
 | Spec | Score | Summary | Depends on |
 | --- | --- | --- | --- |
-| [Scan bag labels to receive stock](scan-bag-receive.md) | 26/30 | Scan a distributor bag's 2D code into Quick add to receive stock or start a new component. | Nothing new |
+| [Scan bag labels to receive stock](scan-bag-receive.md) | 26/30 (shipped) | Scan a distributor bag's 2D code into Quick add to receive stock or start a new component. | Nothing new |
 | [Printable QR labels](qr-labels.md) | 25/30 | Print QR labels for storage locations and items. A phone camera then opens that drawer's stock. | Nothing new |
 | [Import a CAD bill of materials](bom-import.md) | 23/30 | Upload a KiCad, EasyEDA or JLCPCB BOM CSV, review the matches and add the lines to a project. | Nothing new |
 | [Order list](reorder-list.md) | 23/30 | Turn low stock and project shortages into order entries. Mark them ordered, then receive them. | Nothing new |
@@ -16,7 +16,7 @@ Every spec can ship on its own. Where two specs touch the same code, both say so
 
 ## Suggested order
 
-1. **Scan bag labels to receive stock.** It has the top score and makes putting stock away much faster. It also adds `items.supplier_sku`, which the order list can use later.
+1. **Scan bag labels to receive stock** (shipped). It has the top score and makes putting stock away much faster. It also adds `items.supplier_sku`, which the order list can use later.
 2. **Printable QR labels.** PR 1 needs no schema change. It adds `/stock?location=`, `exports_enabled` and `drawer_order(row)`, which later specs reuse.
 3. **Import a CAD bill of materials.** It feeds the build planner directly and needs no schema change. It also sets the value rules that parametric search will reuse.
 4. **Order list.** It works best once projects have full bills of materials and items carry supplier SKUs, so it comes after both.

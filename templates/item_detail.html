@@ -23,12 +23,13 @@
   <a class="button" href="{{url_for('locations', q=item['code'])}}">{{ icon('archive') }}Find the drawer</a>
 </div>
 
-{% if attributes or item['family'] != 'generic' %}
+{% if attributes or item['family'] != 'generic' or item['supplier_sku'] %}
 <dl class="attribute-list">
   <div><dt>Type</dt><dd>{{family['label']}}</dd></div>
   {% for key, value in attributes.items() %}
   <div><dt>{{attribute_labels.get(key, key.replace('_', ' ')|title)}}</dt><dd>{{value}}</dd></div>
   {% endfor %}
+  {% if item['supplier_sku'] %}<div><dt>Supplier SKU</dt><dd>{{item['supplier_sku']}}{% if item['supplier'] %} ({{item['supplier']}}){% endif %}</dd></div>{% endif %}
 </dl>
 {% endif %}
 {% if item['notes'] %}<p class="notes">{{item['notes']}}</p>{% endif %}

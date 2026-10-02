@@ -20,6 +20,7 @@ from reportlab.pdfgen import canvas
 from app.webhooks import init_outbox, enqueue_event, start_worker
 from app import providers as part_providers
 from app.matching import ranked, suggested_homes
+from app.bag_labels import parse_bag_label
 from app.catalogue import FAMILIES, classify, common_suggestions, parse_catalogue
 
 DB_PATH = Path(os.environ.get("STORAGE_DB", "data/storage.db"))
@@ -87,6 +88,17 @@ def init_db():
         conn.execute("ALTER TABLE items ADD COLUMN attributes TEXT NOT NULL DEFAULT '{}'")
     if "image_path" not in item_columns:
         conn.execute("ALTER TABLE items ADD COLUMN image_path TEXT DEFAULT ''")
+    def item_column_names():
+        return {row["name"] for row in conn.execute("PRAGMA table_info(items)")}
+    if not {"supplier", "supplier_sku"} <= item_column_names():
+        # Take the write lock and check again, so a second worker does not add a column twice.
+        conn.execute("BEGIN IMMEDIATE")
+        columns = item_column_names()
+        if "supplier" not in columns:
+            conn.execute("ALTER TABLE items ADD COLUMN supplier TEXT NOT NULL DEFAULT ''")
+        if "supplier_sku" not in columns:
+            conn.execute("ALTER TABLE items ADD COLUMN supplier_sku TEXT NOT NULL DEFAULT ''")
+        conn.commit()
     location_columns = {row["name"] for row in conn.execute("PRAGMA table_info(locations)")}
     if "image_path" not in location_columns:
         conn.execute("ALTER TABLE locations ADD COLUMN image_path TEXT DEFAULT ''")
@@ -397,9 +409,43 @@ def find_stock(query):
     return ranked(query, rows, lambda row: " ".join(row[key] or "" for key in ("name", "manufacturer", "part_number", "code")))
 
 
+def scan_values():
+    """What a bag label read, carried through Quick add and New component as query or form values."""
+    values = {key: request.values.get(key, "").strip()[:200] for key in ("quantity", "supplier", "supplier_sku", "expected", "scan", "manufacturer", "catalogue")}
+    return {key: value for key, value in values.items() if value}
+
+
+def scan_redirect(label):
+    """Send a scanned label to its single matching item, or to the matches for its part number."""
+    conn = db()
+    sql = "SELECT i.id FROM items i WHERE trim(i.{0}) = ? COLLATE NOCASE"
+    part_number = label["part_number"]
+    hits = conn.execute(sql.format("part_number"), (part_number,)).fetchall() if part_number else []
+    if not hits and label["supplier_sku"]:
+        hits = conn.execute(sql.format("supplier_sku"), (label["supplier_sku"],)).fetchall()
+    values = {"q": part_number or label["supplier_sku"], "quantity": label["quantity"], "supplier": label["supplier"],
+              "supplier_sku": label["supplier_sku"], "expected": label["quantity"], "scan": 1}
+    if len(hits) == 1:
+        return redirect(url_for("quick_add", item=hits[0]["id"], **values))
+    entry = conn.execute("SELECT id FROM catalogue WHERE trim(part_number) = ? COLLATE NOCASE", (part_number,)).fetchone() if part_number else None
+    if entry:
+        values["catalogue"] = entry["id"]
+    return redirect(url_for("quick_add", manufacturer=label["manufacturer"] or None, **values))
+
+
 @app.route("/quick-add", methods=["GET", "POST"])
 def quick_add():
-    query = request.values.get("q", "").strip()[:200]
+    query = request.values.get("q", "").strip()
+    if request.method == "GET" and not request.args.get("fragment"):
+        try:
+            label = parse_bag_label(query)
+        except ValueError:
+            flash("Tally could not read this label. Set your scanner to send GS (Ctrl+]).", "error")
+            query = ""
+        else:
+            if label:
+                return scan_redirect(label)
+    query = query[:200]
     session.setdefault("quick_csrf", uuid.uuid4().hex)
     selected = None
     selected_id = request.values.get("item")
@@ -420,13 +466,24 @@ def quick_add():
         except (ValueError, TypeError):
             flash("Choose an item and enter a quantity greater than zero.", "error")
         else:
-            conn = db()
-            with conn:
-                inserted = conn.execute("INSERT OR IGNORE INTO stock_receipts(token,item_id) VALUES (?,?)", (token, selected["id"])).rowcount
-                if inserted:
-                    record_movement(conn, selected, quantity, "Stock received", "stock.in")
-            flash(f"Added {quantity:g} {selected['unit']} · {selected['name']} · {selected['code']}" if inserted else "This addition was already saved.", "success")
-            return redirect(url_for("quick_add", q=query))
+            scanned = bool(request.form.get("scan"))
+            try:
+                expected = float(request.form.get("expected", ""))
+            except ValueError:
+                expected = 0
+            if scanned and math.isfinite(expected) and expected > 0 and quantity > 10 * expected:
+                flash(f"Check the quantity. The bag label says {expected:g}.", "error")
+            else:
+                conn = db()
+                supplier, supplier_sku = request.form.get("supplier", "").strip()[:200], request.form.get("supplier_sku", "").strip()[:200]
+                with conn:
+                    inserted = conn.execute("INSERT OR IGNORE INTO stock_receipts(token,item_id) VALUES (?,?)", (token, selected["id"])).rowcount
+                    if inserted:
+                        record_movement(conn, selected, quantity, "Stock received", "stock.in")
+                        if supplier_sku:
+                            conn.execute("UPDATE items SET supplier=?, supplier_sku=? WHERE id=? AND supplier='' AND supplier_sku=''", (supplier, supplier_sku, selected["id"]))
+                flash(f"Added {quantity:g} {selected['unit']} · {selected['name']} · {selected['code']}" if inserted else "This addition was already saved.", "success")
+                return redirect(url_for("quick_add") if scanned else url_for("quick_add", q=query))
     matches = find_stock(query)[:8] if len(query) >= 2 else []
     catalogue = common_suggestions(query, catalogue_entries()) if len(query) >= 2 else []
     locations = db().execute("SELECT * FROM locations ORDER BY code").fetchall()
@@ -440,7 +497,9 @@ def quick_add():
             for entry in results:
                 entry["link"] = url_for("new_item", name=entry["name"], family=entry["family"], manufacturer=entry["manufacturer"], part_number=entry["part_number"],
                                         **{f"attr_{key}": value for key, value in entry["attributes"].items()})
-    context = dict(query=query, matches=matches, homes=homes, catalogue=catalogue, selected=selected, token=str(uuid.uuid4()),
+    scan = scan_values()
+    new_args = {**scan, **({"part_number": query} if scan.get("scan") else {"name": query})}
+    context = dict(query=query, scan=scan, new_args=new_args, matches=matches, homes=homes, catalogue=catalogue, selected=selected, token=str(uuid.uuid4()),
                    providers=part_providers.PROVIDERS, active_providers=active, provider_results=provider_results, provider_errors=provider_errors)
     return render_template("quick_results.html" if request.args.get("fragment") else "quick_add.html", **context)
 
@@ -477,6 +536,7 @@ def new_item():
         home = layout_setting("family_homes").get(selected_family)
         row = next((location for location in locations if location["code"] == home), None)
         suggested_location = str(row["id"]) if row else ""
+    scanned = {key: request.form.get(key, request.args.get(key, "")).strip()[:200] for key in ("supplier", "supplier_sku")}
     initial = suggestion or {
         "name": suggested_name, "manufacturer": request.args.get("manufacturer", "")[:200], "part_number": request.args.get("part_number", "")[:200],
         "attributes": {key.removeprefix("attr_")[:64]: value[:200] for key, value in request.args.items() if key.startswith("attr_")},
@@ -504,14 +564,14 @@ def new_item():
             now = datetime.now(timezone.utc).isoformat()
             conn = db()
             attributes = {key.removeprefix("attr_"): value.strip() for key, value in request.form.items() if key.startswith("attr_") and value.strip()}
-            manufacturer = request.form.get("manufacturer", "").strip() or attributes.pop("manufacturer", "")
-            part_number = request.form.get("part_number", "").strip() or attributes.pop("part_number", "")
+            manufacturer = request.form.get("manufacturer", "").strip()
+            part_number = request.form.get("part_number", "").strip()
             try:
                 image_path = image_upload("image") if enabled("images") else ""
             except ValueError as exc:
                 flash(str(exc), "error")
-                return render_template("item_form.html", item=None, locations=locations, selected_location=suggested_location, suggested_name=initial["name"], suggested_manufacturer=initial.get("manufacturer", ""), suggested_part_number=initial.get("part_number", ""), suggested_attributes=initial.get("attributes", {}), families=FAMILIES, family_homes=layout_setting("family_homes"), selected_family=selected_family)
-            cur = conn.execute("INSERT INTO items(name, manufacturer, part_number, quantity, unit, minimum_quantity, location_id, notes, image_path, updated_at, family, attributes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (name, manufacturer, part_number, quantity, request.form.get("unit", "pcs").strip() or "pcs", minimum, location_id, request.form.get("notes", "").strip(), image_path, now, selected_family, json.dumps(attributes, ensure_ascii=False)))
+                return render_template("item_form.html", item=None, locations=locations, selected_location=suggested_location, suggested_name=initial["name"], suggested_manufacturer=initial.get("manufacturer", ""), suggested_part_number=initial.get("part_number", ""), suggested_attributes=initial.get("attributes", {}), families=FAMILIES, family_homes=layout_setting("family_homes"), selected_family=selected_family, scanned=scanned)
+            cur = conn.execute("INSERT INTO items(name, manufacturer, part_number, quantity, unit, minimum_quantity, location_id, notes, image_path, updated_at, family, attributes, supplier, supplier_sku) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (name, manufacturer, part_number, quantity, request.form.get("unit", "pcs").strip() or "pcs", minimum, location_id, request.form.get("notes", "").strip(), image_path, now, selected_family, json.dumps(attributes, ensure_ascii=False), scanned["supplier"], scanned["supplier_sku"]))
             if quantity: conn.execute("INSERT INTO movements(item_id, quantity_change, reason, occurred_at) VALUES (?, ?, ?, ?)", (cur.lastrowid, quantity, "Initial stock", now))
             dispatch_webhooks("item.created", item_payload(cur.lastrowid))
             if quantity:
@@ -531,7 +591,7 @@ def new_item():
             },
         }
         suggested_location = request.form.get("location_id", "")
-    return render_template("item_form.html", item=None, locations=locations, selected_location=suggested_location, suggested_name=initial["name"], suggested_manufacturer=initial.get("manufacturer", ""), suggested_part_number=initial.get("part_number", ""), suggested_attributes=initial.get("attributes", {}), families=FAMILIES, family_homes=layout_setting("family_homes"), selected_family=selected_family)
+    return render_template("item_form.html", item=None, locations=locations, selected_location=suggested_location, suggested_name=initial["name"], suggested_manufacturer=initial.get("manufacturer", ""), suggested_part_number=initial.get("part_number", ""), suggested_attributes=initial.get("attributes", {}), families=FAMILIES, family_homes=layout_setting("family_homes"), selected_family=selected_family, scanned=scanned)
 
 @app.route("/items/<int:item_id>", methods=["GET", "POST"])
 def item_detail(item_id):

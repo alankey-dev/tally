@@ -13,7 +13,6 @@ FAMILIES = {
         "label": "Microcontroller board",
         "keywords": "esp32 esp8266 arduino raspberry pi pico rp2040 microcontroller mcu development board seeed xiao",
         "fields": [
-            ("manufacturer", "Manufacturer", "text", "e.g. Seeed Studio"),
             ("chip", "Chip / family", "text", "e.g. ESP32-C3"),
             ("variant", "Board variant", "text", "e.g. XIAO"),
             ("connectivity", "Connectivity", "text", "e.g. Wi-Fi, Bluetooth, LoRa"),
@@ -47,7 +46,7 @@ FAMILIES = {
     },
     "semiconductor": {
         "label": "Semiconductor / IC", "keywords": "ic chip diode transistor mosfet regulator op amp logic",
-        "fields": [("part_number", "Part number", "text", "e.g. NE555P"), ("function", "Function", "text", "e.g. timer"), ("package", "Package", "text", "e.g. DIP-8 or SOIC-8"), ("voltage", "Voltage", "text", "Optional"), ("current", "Current", "text", "Optional")],
+        "fields": [("function", "Function", "text", "e.g. timer"), ("package", "Package", "text", "e.g. DIP-8 or SOIC-8"), ("voltage", "Voltage", "text", "Optional"), ("current", "Current", "text", "Optional")],
     },
     "cable": {
         "label": "Cable / adaptor", "keywords": "cable wire lead adaptor hdmi ethernet usb",

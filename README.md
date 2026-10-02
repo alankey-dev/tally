@@ -11,6 +11,7 @@ Tally is a self-hosted inventory for an electronics workshop. One container, one
 ## Features
 
 - **Quick add.** Type what arrived, pick the matching variant, enter a count. Fuzzy matching forgives typos and spacing. Known parts come prefilled from a catalogue you can import from a file or URL in Settings.
+- **Scan to receive.** Scan the 2D code on a Digi-Key, Mouser, Farnell, LCSC or TME bag into Quick add. Tally reads the part number, quantity and supplier SKU, opens the receive form, and you press Enter. Unknown parts open New component prefilled. With no scanner, tap **Scan a bag label** and take a photo; this works over plain HTTP, with no HTTPS needed.
 - **Stock checkout.** Build a list, then record use, receipt, return, or loss in one action.
 - **Permanent homes.** Every part has a coded drawer or box. Search by name, part number, or location code.
 - **Low stock.** Set a minimum and the dashboard flags it.
@@ -18,6 +19,10 @@ Tally is a self-hosted inventory for an electronics workshop. One container, one
 - **Webhooks.** Send app events to external services, or locate an item with a drawer LED controller. Subscribe to individual events or all events. See [webhook events and payloads](docs/webhooks.md).
 - **Live display.** Open the dashboard on a spare tablet; it refreshes when anything changes.
 - **Light and dark**, system fonts, keyboard friendly, WCAG AA colours.
+
+### Barcode scanners
+
+Use a USB or Bluetooth scanner in keyboard mode, and turn on GS (Ctrl+]) in its settings so Digi-Key and Mouser labels split correctly. Tally handles the Ctrl+] and Ctrl+D key presses that scanners send, so the browser's bookmark dialog does not open and lose the scan.
 
 ## Quick start
 

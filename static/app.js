@@ -34,7 +34,7 @@
       const names = {
         capacitor: [valueFor('value'), valueFor('value_unit'), valueFor('capacitor_type'), 'capacitor'],
         resistor: [valueFor('value'), valueFor('value_unit'), valueFor('tolerance'), valueFor('power'), 'resistor'],
-        microcontroller: [valueFor('manufacturer'), valueFor('variant'), valueFor('chip')],
+        microcontroller: [guidedForm.querySelector('#item-manufacturer')?.value.trim() || '', valueFor('variant'), valueFor('chip')],
         led: [valueFor('colour'), valueFor('package'), valueFor('led_type'), 'LED'],
         connector: [valueFor('series'), valueFor('positions') && `${valueFor('positions')}-pin`, valueFor('gender'), 'connector'],
         sensor: [valueFor('model'), valueFor('measures'), 'sensor'],
@@ -43,6 +43,7 @@
       const nextName = (names[family] || []).filter(Boolean).join(' ');
       if (nextName) itemName.value = nextName;
     };
+    guidedForm.querySelector('#item-manufacturer')?.addEventListener('input', refreshName);
     guidedForm.querySelectorAll('[data-attribute]').forEach(field => field.addEventListener('input', refreshName));
     familySelect.addEventListener('change', () => {
       generatedName = broadNames.has(itemName.value.trim().toLowerCase()) || generatedName;

@@ -22,6 +22,12 @@ A family-specific fact used to distinguish variants, such as capacitance, voltag
 A permanently coded drawer, box or other physical home where items are normally returned.
 _Avoid_: Bin, category
 
+**Bag label**:
+A distributor's 2D code on a bag of parts. It carries the manufacturer part number, the quantity and the supplier SKU.
+
+**Supplier SKU**:
+The distributor's order code for an item, kept for reordering.
+
 **Stock movement**:
 A dated increase or decrease to an item’s on-hand quantity.
 

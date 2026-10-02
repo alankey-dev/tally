@@ -4,7 +4,7 @@
   {% if matches %}
   <div class="quick-matches">
     {% for item in matches %}
-    <a class="quick-match" href="{{url_for('quick_add', q=query, item=item['id'])}}">
+    <a class="quick-match" href="{{url_for('quick_add', q=query, item=item['id'], **scan)}}">
       <strong>{{item['name']}}</strong>
       <span>{{item['manufacturer']}} {{item['part_number']}}</span>
       <span><code>{{item['code']}}</code> · {{item['label']}} · {{item['quantity']|qty}} {{item['unit']}} on hand</span>
@@ -64,7 +64,7 @@
   <p>Suggested homes based on the storage guide. Confirm the right one.</p>
   <div class="quick-matches">
     {% for home in homes %}
-    <a class="quick-match" href="{{url_for('new_item', name=query, location=home['id'])}}">
+    <a class="quick-match" href="{{url_for('new_item', location=home['id'], **new_args)}}">
       <strong><code>{{home['code']}}</code> {{home['label']}}</strong>
       <span>Create a new variant here</span>
       <span class="cta">Choose</span>
@@ -72,6 +72,6 @@
     {% endfor %}
   </div>
   {% endif %}
-  <a class="button" href="{{url_for('new_item', name=query)}}">Describe this item</a>
+  <a class="button" href="{{url_for('new_item', **new_args)}}">Describe this item</a>
 </section>
 {% endif %}

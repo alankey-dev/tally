@@ -119,6 +119,7 @@ hr { margin: 20px 0; border: 0; border-top: 1px solid var(--border); }
 ::selection { background: var(--accent-soft); }
 .icon { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .icon.small { width: 15px; height: 15px; }
+.button:has(> input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* ---------- App shell ---------- */

@@ -19,6 +19,12 @@ Styles live in `static/app.css`. Tailwind only supplies the reset; `npm run buil
 - `CONTEXT.md` defines the words the app uses (item, variant, storage location). Please stick to them in the UI.
 - Pages must work on a phone, by keyboard, and in light and dark themes.
 
+## Adding a bag label format
+
+Bag labels are read by `parse_bag_label` in `app/bag_labels.py`. Add a branch that returns `manufacturer`, `part_number`, `supplier`, `supplier_sku` and `quantity`, or `None` when the text is not your format, and add a made-up fixture and a test in `tests/test_scan.py`. Add the label's opening characters to `labelStart` in `static/quick_add.js` so the live search skips it.
+
+Photo decoding uses [zxing-wasm](https://github.com/Sec-ant/zxing-wasm), copied into `static/vendor/zxing-wasm/` and committed, so running Tally needs no build step. After changing the pinned version in `package.json`, run `npm install && npm run vendor:zxing` and commit the result.
+
 ## Sharing a storage layout
 
 Layouts are JSON files in `app/layouts/`. Each location needs a `code` and a `label`, and can also have a `kind` and search `keywords`. `groups` names the code prefixes, and `family_homes` maps a component family to the location where new parts of that family go by default. See `example.json`.
