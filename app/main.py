@@ -10,10 +10,10 @@ import threading
 import urllib.request
 from io import BytesIO
 from urllib.parse import urlparse
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
-from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, url_for, session, send_file, send_from_directory
+from flask import Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, url_for, session, send_file, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -86,6 +86,8 @@ def init_db():
     CREATE TABLE IF NOT EXISTS project_items (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, item_id INTEGER NOT NULL REFERENCES items(id), quantity REAL NOT NULL DEFAULT 0, per_build REAL NOT NULL DEFAULT 0, PRIMARY KEY(project_id, item_id));
     CREATE TABLE IF NOT EXISTS builds (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, quantity INTEGER NOT NULL, lines TEXT NOT NULL, built_at TEXT NOT NULL, undone_at TEXT);
     CREATE TABLE IF NOT EXISTS webhooks (id INTEGER PRIMARY KEY, event TEXT NOT NULL, destination_url TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS order_entries (id INTEGER PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES items(id), quantity REAL NOT NULL, status TEXT NOT NULL DEFAULT 'wanted', source TEXT NOT NULL DEFAULT '', supplier TEXT NOT NULL DEFAULT '', order_ref TEXT NOT NULL DEFAULT '', expected_on TEXT, created_at TEXT NOT NULL, ordered_at TEXT, received_at TEXT, received_quantity REAL);
+    CREATE UNIQUE INDEX IF NOT EXISTS order_entries_one_wanted ON order_entries(item_id) WHERE status='wanted';
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, family TEXT NOT NULL DEFAULT 'generic', manufacturer TEXT DEFAULT '', part_number TEXT DEFAULT '', attributes TEXT NOT NULL DEFAULT '{}');
     """)
@@ -204,7 +206,7 @@ def ensure_database():
     public_endpoints = {"access", "logout", "static"}
     if auth_enabled() and request.endpoint not in public_endpoints and (not password or session.get("access_unlocked") != access_token(password["value"])):
         return redirect(url_for("access", next=request.full_path))
-    restricted = {"new_item": "add_components", "export_inventory": "exports", "export_bom": "exports", "location_labels_pdf": "exports", "item_label_pdf": "exports"}
+    restricted = {"new_item": "add_components", "export_inventory": "exports", "export_bom": "exports", "export_orders": "exports", "location_labels_pdf": "exports", "item_label_pdf": "exports"}
     if request.endpoint in restricted and not enabled(restricted[request.endpoint]):
         abort(403)
     if request.endpoint == "item_detail" and request.method == "POST" and not enabled("edit_components"):
@@ -218,6 +220,10 @@ def format_quantity(value):
     except (TypeError, ValueError):
         return value
     return str(int(number)) if number == int(number) else f"{number:.3f}".rstrip("0").rstrip(".")
+
+@app.template_filter("expected_date")
+def expected_date(value):
+    return date.fromisoformat(value).strftime("%-d %b")
 
 @app.context_processor
 def feature_context():
@@ -301,7 +307,7 @@ WEBHOOK_EVENTS = {
     "project.build_undone": "Project build undone", "catalogue.imported": "Catalogue imported",
     "settings.updated": "Settings updated", "webhook.created": "Webhook added",
     "webhook.deleted": "Webhook removed", "access.unlocked": "Signed in", "access.locked": "Signed out",
-    "export.created": "Export downloaded",
+    "export.created": "Export downloaded", "order.added": "Order list entries added",
 }
 
 
@@ -337,14 +343,22 @@ def record_movement(conn, item, change, reason, event, project=None):
     conn.execute("INSERT INTO movements(item_id,quantity_change,reason,occurred_at) VALUES (?,?,?,?)", (item["id"], change, reason, now))
     dispatch_webhooks(event, {"item": {"id": item["id"], "name": item["name"], "part_number": item["part_number"], "location": item["code"]}, "quantity_change": change, "unit": item["unit"], "reason": reason, "project": project})
 
+def low_stock(conn):
+    """Every item at or below its minimum, lowest first."""
+    return conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.minimum_quantity IS NOT NULL AND i.quantity <= i.minimum_quantity ORDER BY i.quantity").fetchall()
+
+def on_order(conn):
+    """The total quantity on order and the earliest expected date, keyed by item id."""
+    return {row["item_id"]: row for row in conn.execute("SELECT item_id, sum(quantity) AS quantity, min(expected_on) AS expected_on FROM order_entries WHERE status='ordered' GROUP BY item_id")}
+
 @app.route("/")
 def dashboard():
     conn = db()
-    stats = conn.execute("SELECT (SELECT count(*) FROM items) items, (SELECT count(*) FROM locations) locations, (SELECT count(*) FROM items WHERE minimum_quantity IS NOT NULL AND quantity <= minimum_quantity) low_stock").fetchone()
+    stats = conn.execute("SELECT (SELECT count(*) FROM items) items, (SELECT count(*) FROM locations) locations").fetchone()
     recent = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id ORDER BY i.updated_at DESC LIMIT 8").fetchall()
-    low = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.minimum_quantity IS NOT NULL AND i.quantity <= i.minimum_quantity ORDER BY i.quantity LIMIT 8").fetchall()
+    low = low_stock(conn)
     projects = conn.execute("SELECT * FROM projects ORDER BY created_at DESC LIMIT 4").fetchall()
-    return render_template("dashboard.html", stats=stats, recent=recent, low=low, projects=projects, buildable=project_build_counts(conn))
+    return render_template("dashboard.html", stats=stats, low_count=len(low), recent=recent, low=low[:8], ordered=on_order(conn), projects=projects, buildable=project_build_counts(conn))
 
 @app.route("/components")
 @app.route("/items")
@@ -547,6 +561,9 @@ def version():
            SELECT updated_at AS changed FROM items
            UNION ALL SELECT occurred_at AS changed FROM movements
            UNION ALL SELECT created_at AS changed FROM locations
+           UNION ALL SELECT created_at FROM order_entries
+           UNION ALL SELECT ordered_at FROM order_entries
+           UNION ALL SELECT received_at FROM order_entries
         )"""
     ).fetchone()["value"]
     return jsonify(version=marker)
@@ -652,6 +669,8 @@ def item_detail(item_id):
         attributes=attributes,
         family=family,
         attribute_labels=attribute_labels,
+        ordered=on_order(conn).get(item_id),
+        suggested=suggested_order_quantity(item),
     )
 
 @app.route("/items/<int:item_id>/find", methods=["POST"])
@@ -1028,6 +1047,148 @@ def export_bom(project_id, format):
         abort(404)
     rows = db().execute("SELECT i.name, i.part_number, pi.per_build, pi.quantity, i.quantity, i.unit, l.code FROM project_items pi JOIN items i ON i.id=pi.item_id JOIN locations l ON l.id=i.location_id WHERE pi.project_id=? ORDER BY i.name COLLATE NOCASE", (project_id,)).fetchall()
     return export_rows(rows, ["Component", "Part number", "Per build", "Consumed", "On hand", "Unit", "Location"], f"{project['title']}-bom", format, f"Bill of materials · {project['title']}")
+
+def suggested_order_quantity(item):
+    """Enough to bring stock up to twice the minimum, rounded up and never less than 1."""
+    return max(1, math.ceil(2 * (item["minimum_quantity"] or 0) - item["quantity"] - TOLERANCE))
+
+def mouser_text(entries):
+    """Mouser part-list text, one PARTNUMBER|QTY line each, and the names of the items it had to skip."""
+    lines = [f"{entry['part_number']}|{format_quantity(entry['quantity'])}" for entry in entries if entry["part_number"]]
+    return "\n".join(lines), [entry["name"] for entry in entries if not entry["part_number"]]
+
+def add_order_entries_to(conn, wanted, replace=False):
+    """Add (item, quantity, source) rows as To order entries; an item already To order takes the new quantity when replace is set, and the larger one otherwise."""
+    now = datetime.now(timezone.utc).isoformat()
+    for item, quantity, source in wanted:
+        conn.execute("INSERT INTO order_entries(item_id, quantity, source, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(item_id) WHERE status='wanted' DO UPDATE SET quantity=" + ("excluded.quantity" if replace else "max(quantity, excluded.quantity)") + ", source=excluded.source", (item["id"], quantity, source, now))
+    dispatch_webhooks("order.added", {"entries": [{"item_id": item["id"], "name": item["name"], "part_number": item["part_number"], "location": item["code"], "quantity": quantity, "source": source} for item, quantity, source in wanted]})
+
+def positive_quantity(value):
+    """A finite quantity above 0 from a form value, or None."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+@app.route("/orders")
+def order_list():
+    conn = db()
+    query = request.args.get("q", "").strip()
+    entries = conn.execute("SELECT e.*, i.name, i.part_number, i.manufacturer, i.unit, i.quantity AS on_hand, i.minimum_quantity, l.code FROM order_entries e JOIN items i ON i.id=e.item_id JOIN locations l ON l.id=i.location_id WHERE e.status IN ('wanted', 'ordered') ORDER BY i.name COLLATE NOCASE").fetchall()
+    open_ids = {entry["item_id"] for entry in entries}
+    wanted = [entry for entry in entries if entry["status"] == "wanted"]
+    ordered = sorted((entry for entry in entries if entry["status"] == "ordered"), key=lambda entry: (entry["supplier"].lower(), entry["expected_on"] or "9999"))
+    suppliers = {}
+    for entry in ordered:
+        suppliers.setdefault(entry["supplier"], []).append(entry)
+    mouser, skipped = mouser_text(wanted) if enabled("exports") else ("", [])
+    return render_template("orders.html", suggested=[(item, suggested_order_quantity(item)) for item in low_stock(conn) if item["id"] not in open_ids], wanted=wanted, suppliers=suppliers, results=find_stock(query)[:10] if query else [], query=query, today=datetime.now(timezone.utc).date().isoformat(), mouser=mouser, skipped=skipped)
+
+@app.route("/orders", methods=["POST"])
+def add_order_entries():
+    conn = db()
+    wanted = []
+    for item_id in request.form.getlist("item_id"):
+        item = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.id=?", (item_id,)).fetchone() if item_id.isdigit() else None
+        quantity = positive_quantity(request.form.get(f"quantity_{item_id}"))
+        if item is None or quantity is None:
+            flash("Choose existing items and enter a quantity above 0 for each.", "error")
+            return redirect(url_for("order_list"))
+        wanted.append((item, quantity, "Low stock" if item["minimum_quantity"] is not None and item["quantity"] <= item["minimum_quantity"] else "Added by hand"))
+    if not wanted:
+        flash("Tick at least one item to add.", "error")
+    else:
+        add_order_entries_to(conn, wanted, replace=True)
+        conn.commit()
+        flash(f"{len(wanted)} item{'s' if len(wanted) != 1 else ''} added to the order list.", "success")
+    return redirect(url_for("order_list"))
+
+@app.route("/orders/<int:entry_id>", methods=["POST"])
+def update_order_entry(entry_id):
+    quantity = positive_quantity(request.form.get("quantity"))
+    if quantity is None:
+        flash("Enter a quantity above 0.", "error")
+    elif not db().execute("UPDATE order_entries SET quantity=? WHERE id=? AND status='wanted'", (quantity, entry_id)).rowcount:
+        flash("That entry is no longer waiting to be ordered.", "error")
+    return redirect(url_for("order_list"))
+
+@app.route("/orders/<int:entry_id>/delete", methods=["POST"])
+def delete_order_entry(entry_id):
+    if not db().execute("DELETE FROM order_entries WHERE id=? AND status='wanted'", (entry_id,)).rowcount:
+        flash("That entry is no longer waiting to be ordered.", "error")
+    return redirect(url_for("order_list"))
+
+@app.route("/orders/ordered", methods=["POST"])
+def mark_ordered():
+    ids = [int(value) for value in request.form.getlist("entry_id") if value.isdigit()]
+    if not ids:
+        flash("Tick the entries you ordered.", "error")
+        return redirect(url_for("order_list"))
+    try:
+        expected = date.fromisoformat(request.form.get("expected_on", "").strip()).isoformat()
+    except ValueError:
+        expected = None
+    changed = db().execute(f"UPDATE order_entries SET status='ordered', supplier=?, order_ref=?, expected_on=?, ordered_at=? WHERE id IN ({','.join('?' * len(ids))}) AND status='wanted'", (request.form.get("supplier", "").strip()[:200], request.form.get("order_ref", "").strip()[:200], expected, datetime.now(timezone.utc).isoformat(), *ids)).rowcount
+    flash(f"{changed} entr{'y' if changed == 1 else 'ies'} marked ordered." if changed else "None of those entries were waiting to be ordered.", "success" if changed else "error")
+    return redirect(url_for("order_list"))
+
+@app.route("/orders/<int:entry_id>/receive", methods=["POST"])
+def receive_order_entry(entry_id):
+    """Close an On order entry and record the stock coming in, once."""
+    conn = db()
+    message, category = "That entry was already received.", "error"
+    with conn:
+        # Take the write lock first and make marking the entry received the guard, as undo_build() does.
+        conn.execute("BEGIN IMMEDIATE")
+        entry = conn.execute("SELECT * FROM order_entries WHERE id=?", (entry_id,)).fetchone()
+        quantity = positive_quantity(request.form.get("quantity"))
+        if entry is None:
+            message = "That entry does not exist."
+        elif quantity is None:
+            message = "Enter the quantity that arrived, above 0."
+        elif entry["status"] == "wanted":
+            message = "That entry has not been ordered yet."
+        elif conn.execute("UPDATE order_entries SET status='received', received_at=?, received_quantity=? WHERE id=? AND status='ordered'", (datetime.now(timezone.utc).isoformat(), quantity, entry_id)).rowcount:
+            item = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.id=?", (entry["item_id"],)).fetchone()
+            record_movement(conn, item, quantity, "Order received", "stock.in")
+            message, category = f"Received {format_quantity(quantity)} {item['unit']} of {item['name']}. Put it in {item['code']}.", "success"
+    flash(message, category)
+    return redirect(url_for("order_list"))
+
+@app.route("/projects/<int:project_id>/order-shortages", methods=["POST"])
+def order_shortages(project_id):
+    """Add what `wanted` builds are short, less what is already on order, to the order list."""
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    if not project:
+        abort(404)
+    wanted = builds_wanted(request.form)
+    if not wanted:
+        flash(f"Enter how many to build: a whole number from 1 to {MAX_BUILDS:,}.", "error")
+        return back_to_project(project_id)
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = []
+        for line in project_plan(conn, project_id, wanted):
+            remainder = line["short"] - conn.execute("SELECT coalesce(sum(quantity), 0) FROM order_entries WHERE item_id=? AND status='ordered'", (line["id"],)).fetchone()[0]
+            if line["short"] > 0 and remainder > TOLERANCE:
+                rows.append((line, remainder, f"{project['title']} ×{wanted}"))
+        if rows:
+            add_order_entries_to(conn, rows)
+    flash(f"{len(rows)} item{'s' if len(rows) != 1 else ''} added to the order list." if rows else f"Nothing to add for ×{wanted}.", "success" if rows else "error")
+    return back_to_project(project_id)
+
+@app.route("/orders/export.<format>")
+def export_orders(format):
+    if format not in {"csv", "txt"}:
+        abort(404)
+    rows = db().execute("SELECT i.part_number, e.quantity, l.code, i.manufacturer, i.name FROM order_entries e JOIN items i ON i.id=e.item_id JOIN locations l ON l.id=i.location_id WHERE e.status='wanted' ORDER BY i.name COLLATE NOCASE").fetchall()
+    if format == "csv":
+        return export_rows(rows, ["Part number", "Quantity", "Customer reference", "Manufacturer", "Component"], "tally-order-list", format, "Order list")
+    dispatch_webhooks("export.created", {"filename": "tally-order-list.txt", "format": format})
+    return Response(mouser_text(rows)[0] + "\n", mimetype="text/plain", headers={"Content-Disposition": "attachment; filename=tally-order-list.txt"})
 
 @app.route("/reports")
 def reports():

@@ -55,6 +55,7 @@ Example webhook (additional item fields omitted):
 | `access.unlocked` | Signed in |
 | `access.locked` | Signed out |
 | `export.created` | Export downloaded |
+| `order.added` | Order list entries added |
 
 Item creation emits `item.created` and, when initial quantity is positive,
 `stock.in`. Saving an existing project line emits `project.line_updated`.
@@ -63,6 +64,8 @@ Builds emit one stock event per line followed by the build event. Undo emits
 undo emits nothing. Stock events and delivery rows commit atomically with their stock changes; only committed deliveries are sent.
 Validation failures and database rollbacks emit no mutation events. Initial
 layout/catalogue seeding and database migrations emit no events.
+
+Adding to the order list emits `order.added` once per request, with `entries` (item id, name, part number, location, quantity and source). Receiving an entry emits `stock.in`.
 
 Item events contain `item` and `location`; stock events keep their existing
 `item.location` code, `quantity_change`, `unit`, `reason`, and `project` fields.

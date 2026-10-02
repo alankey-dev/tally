@@ -31,6 +31,7 @@
   <label class="inline-qty">Build<input name="quantity" type="number" min="1" max="{{max_builds}}" step="1" value="{{wanted}}" required autocomplete="off" aria-label="Number of builds"></label>
   <button class="button" formmethod="get" formaction="{{url_for('project_detail', project_id=project['id'])}}" formnovalidate>Check stock</button>
   <button class="button primary"{% if not plan or short_lines %} disabled{% endif %}>{{ icon('swap') }}Build <span data-build-count>×{{wanted}}</span></button>
+  {% if plan %}<button class="button" formaction="{{url_for('order_shortages', project_id=project['id'])}}" data-order-shortages{% if not short_lines %} disabled{% endif %}>{{ icon('cart') }}Add shortages to order list</button>{% endif %}
   {% if short_lines and buildable %}<small>Stock covers <a href="{{url_for('project_detail', project_id=project['id'], quantity=buildable if buildable > 1 else None)}}">×{{buildable}}</a>.</small>{% endif %}
 </form>
 <div class="table-wrap">

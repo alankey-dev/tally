@@ -140,12 +140,20 @@
         row.querySelector('[data-status]').innerHTML = missing > 1e-9 ? `<span class="badge danger">Short ${formatQuantity(missing)}</span>` : '<span class="badge neutral">Covered</span>';
       });
       build.disabled = short || !lines.length;
+      planner.querySelectorAll('[data-order-shortages]').forEach(button => button.disabled = !short);
     };
     wanted.addEventListener('input', update);
     // Browsers restore a typed count without an input event on reload or history navigation.
     window.addEventListener('pageshow', update);
     update();
   }
+
+  // Copy button for the Mouser text: shown only where the clipboard API exists (not on plain HTTP).
+  document.querySelectorAll('[data-copy]').forEach(button => {
+    if (!(window.isSecureContext && navigator.clipboard)) return;
+    button.hidden = false;
+    button.addEventListener('click', () => navigator.clipboard.writeText(document.querySelector(button.dataset.copy).value));
+  });
 
   const menuToggle = document.querySelector('[data-menu-toggle]');
   const sheet = document.querySelector('[data-menu-sheet]');

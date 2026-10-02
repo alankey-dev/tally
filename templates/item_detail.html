@@ -13,6 +13,7 @@
     <strong>{{item['quantity']|qty}}</strong>
     <span>{{item['unit']}} on hand</span>
     {% if item['minimum_quantity'] is not none %}<small>Minimum {{item['minimum_quantity']|qty}} {{item['unit']}}</small>{% endif %}
+    {% if ordered %}<small>On order: {{ordered['quantity']|qty}} {{item['unit']}}{% if ordered['expected_on'] %}, expected {{ordered['expected_on']|expected_date}}{% endif %}</small>{% endif %}
   </div>
 </section>
 
@@ -20,6 +21,7 @@
   <form method="post" action="{{url_for('find_item', item_id=item['id'])}}"><button class="button">Locate item</button></form>
   <a class="button primary" href="{{url_for('stock', add=item['id'])}}">{{ icon('swap') }}Use in stock checkout</a>
   <a class="button" href="{{url_for('quick_add', q=item['name'], item=item['id'])}}">{{ icon('zap') }}Receive stock</a>
+  <form method="post" action="{{url_for('add_order_entries')}}"><input type="hidden" name="item_id" value="{{item['id']}}"><input type="hidden" name="quantity_{{item['id']}}" value="{{suggested}}"><button class="button">{{ icon('cart') }}Add to order list</button></form>
   <a class="button" href="{{url_for('locations', q=item['code'])}}">{{ icon('archive') }}Find the drawer</a>
   {% if exports_enabled %}<a class="button" target="_blank" href="{{url_for('item_label_pdf', item_id=item['id'])}}">{{ icon('download') }}Print label</a>{% endif %}
 </div>

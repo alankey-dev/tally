@@ -33,6 +33,13 @@ A distributor's code on a parts bag is a **Bag label**, not a Label. The databas
 **Supplier SKU**:
 The distributor's order code for an item, kept for reordering.
 
+**Order entry**:
+An item and a quantity to buy, which is to order, on order or received.
+_Avoid_: Line (that means a bill of materials row), purchase order
+
+**On order**:
+An order entry that has been placed but not yet received.
+
 **Stock movement**:
 A dated increase or decrease to an item’s on-hand quantity.
 

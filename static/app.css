@@ -405,6 +405,7 @@ a.metric:hover { background: var(--surface-2); text-decoration: none; }
 .build-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
 .build-form .inline-qty, td .inline-qty { margin: 0; }
 td .inline-qty { justify-content: flex-end; }
+.order-text { min-height: 8rem; font-family: ui-monospace, monospace; }
 .build-foot { margin-top: 24px; }
 
 /* ---------- Reports and settings ---------- */

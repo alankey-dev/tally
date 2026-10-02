@@ -22,6 +22,21 @@
       <a class="button" href="{{url_for('export_inventory', format='pdf')}}">{{ icon('download') }}PDF</a>
     </div>
   </div>
+  {% if exports_enabled %}
+  <div class="report-card card">
+    <div>
+      {{ icon('cart') }}
+      <div>
+        <h2>Order list</h2>
+        <p>The entries waiting to be ordered, for a supplier cart.</p>
+      </div>
+    </div>
+    <div class="button-group">
+      <a class="button" href="{{url_for('export_orders', format='csv')}}">{{ icon('download') }}CSV</a>
+      <a class="button" href="{{url_for('export_orders', format='txt')}}">{{ icon('download') }}Mouser text</a>
+    </div>
+  </div>
+  {% endif %}
   <div class="report-card card">
     <div>
       {{ icon('folder') }}

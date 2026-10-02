@@ -15,7 +15,8 @@ Tally is a self-hosted inventory for an electronics workshop. One container, one
 - **Labels.** Print QR labels for drawers and parts; scan one with any phone camera to open that drawer's stock.
 - **Stock checkout.** Build a list, then record use, receipt, return, or loss in one action.
 - **Permanent homes.** Every part has a coded drawer or box. Search by name, part number, or location code.
-- **Low stock.** Set a minimum and the dashboard flags it.
+- **Low stock.** Set a minimum and the dashboard flags it, and the Order list suggests what to buy.
+- **Order list.** Turn low stock and project shortages into order entries, export them as CSV or Mouser part-list text, mark them ordered with a supplier and expected date, then tap Received to put the stock in.
 - **Projects.** Keep each build's bill of materials, see how many you can build from stock and which lines fall short, then build ×N to take every part in one go. Undo if you change your mind. Import a KiCad, EasyEDA or JLCPCB BOM CSV and match it to your items. Export the BOM as CSV or PDF.
 - **Webhooks.** Send app events to external services, or locate an item with a drawer LED controller. Subscribe to individual events or all events. See [webhook events and payloads](docs/webhooks.md).
 - **Live display.** Open the dashboard on a spare tablet; it refreshes when anything changes.
