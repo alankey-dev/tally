@@ -5,7 +5,7 @@ import io
 import json
 import math
 import re
-from app.matching import normalise, score_tokens
+from app.matching import normalise, rewrite_values, score_tokens
 
 ALIASES = {
     "designator": ("reference", "references", "designator"),
@@ -110,15 +110,6 @@ def parse_bom(raw):
     return lines, skipped
 
 
-def value_text(text):
-    """Write component values one way, so 10kΩ, 10 k and 10K meet, as do 4k7 and 4.7k."""
-    text = text.casefold().replace("µ", "u").replace("μ", "u")
-    text = re.sub(r"\bohms?\b|[ωΩ]", "", text)
-    text = re.sub(r"\b(\d+)([kmgunp])(\d+)\b", r"\1.\3 \2", text)
-    text = re.sub(r"\b(\d+)r(\d+)\b", r"\1.\2", text)
-    return re.sub(r"(\d)\s*([pnukmg])[fh]?\b", r"\1 \2", text)
-
-
 def package_of(footprint):
     """A package a footprint name carries, such as 0805 from R_0805_2012Metric, or ''."""
     found = IMPERIAL.search(footprint) or LEADING_PACKAGE.search(footprint)
@@ -135,7 +126,7 @@ def prepare_items(rows):
             attributes = {}
         values = attributes.values() if isinstance(attributes, dict) else ()
         text = " ".join(str(part or "") for part in (row["name"], row["manufacturer"], row["part_number"], *values))
-        item = {"id": row["id"], "name": row["name"], "quantity": row["quantity"], "unit": row["unit"], "code": row["code"], "words": normalise(value_text(text))}
+        item = {"id": row["id"], "name": row["name"], "quantity": row["quantity"], "unit": row["unit"], "code": row["code"], "words": normalise(rewrite_values(text))}
         items.append(item)
         for word in set(item["words"]):
             by_word.setdefault(word, []).append(item)
@@ -151,7 +142,7 @@ def match_line(line, index, search=""):
         found = {item["id"]: item for code in codes for item in index["by_part"].get(code, [])}
         if found:
             return "part", list(found.values())[:5]
-    wanted = normalise(value_text(search or line["value"]))
+    wanted = normalise(rewrite_values(search or line["value"]))
     number = next((token for token in wanted if any(char.isdigit() for char in token)), None)
     pool = index["by_word"].get(number, []) if number else index["items"]
     package = re.findall(r"[a-z0-9]+", package_of(line["footprint"]).casefold())

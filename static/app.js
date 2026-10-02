@@ -86,7 +86,7 @@
         suggestions.replaceChildren(...results.map(result => {
           const link = document.createElement('a');
           link.href = `/items/${result.id}`;
-          link.innerHTML = `<strong>${escapeHtml(result.name)}</strong><span>${escapeHtml(result.code)} · ${escapeHtml(result.label)}</span>`;
+          link.innerHTML = `<strong>${escapeHtml(result.name)}</strong><span>${result.summary ? escapeHtml(result.summary) + ' · ' : ''}${escapeHtml(result.code)} · ${escapeHtml(result.label)}</span>`;
           return link;
         }));
         suggestions.hidden = results.length === 0;

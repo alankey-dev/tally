@@ -14,7 +14,7 @@ Tally is a self-hosted inventory for an electronics workshop. One container, one
 - **Scan to receive.** Scan the 2D code on a Digi-Key, Mouser, Farnell, LCSC or TME bag into Quick add. Tally reads the part number, quantity and supplier SKU, opens the receive form, and you press Enter. Unknown parts open New component prefilled. With no scanner, tap **Scan a bag label** and take a photo; this works over plain HTTP, with no HTTPS needed.
 - **Labels.** Print QR labels for drawers and parts; scan one with any phone camera to open that drawer's stock.
 - **Stock checkout.** Build a list, then record use, receipt, return, or loss in one action.
-- **Permanent homes.** Every part has a coded drawer or box. Search by name, part number, or location code.
+- **Permanent homes.** Every part has a coded drawer or box. Search by name, part number, value, package or location code, such as `10k 0603` or `100nF 50V`. On Components, filter by component family and by attribute chips such as package, and set a value range for resistors and capacitors.
 - **Low stock.** Set a minimum and the dashboard flags it, and the Order list suggests what to buy.
 - **Order list.** Turn low stock and project shortages into order entries, export them as CSV or Mouser part-list text, mark them ordered with a supplier and expected date, then tap Received to put the stock in.
 - **Attachments.** Attach a datasheet PDF, a pinout photo or a link to any item, and open it with one tap. Share one with every item made from the same quick add catalogue entry. Components marked with a file icon have attachments.

@@ -6,6 +6,7 @@
     {% for item in matches %}
     <a class="quick-match" href="{{url_for('quick_add', q=query, item=item['id'], **scan)}}">
       <strong>{{item['name']}}</strong>
+      {% if item['summary'] %}<span>{{item['summary']}}</span>{% endif %}
       <span>{{item['manufacturer']}} {{item['part_number']}}</span>
       <span><code>{{item['code']}}</code> · {{item['label']}} · {{item['quantity']|qty}} {{item['unit']}} on hand</span>
       <span class="cta">Add stock</span>

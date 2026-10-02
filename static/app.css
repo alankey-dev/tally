@@ -296,6 +296,17 @@ a.metric:hover { background: var(--surface-2); text-decoration: none; }
 .split.wide { grid-template-columns: minmax(0, 1.4fr) minmax(300px, .8fr); }
 
 /* ---------- Components ---------- */
+.filter-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+.filter-chips > strong { font-size: .8125rem; font-weight: 500; margin-right: 4px; }
+.filter-chips a { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 3px 12px; border-radius: var(--radius-sm); background: var(--surface-3); color: var(--text-2); font-size: .8125rem; font-weight: 500; }
+.filter-chips a:hover { color: var(--text); text-decoration: none; }
+.filter-chips a[aria-current="true"] { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
+.filter-panel { margin-bottom: 16px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.filter-panel summary { cursor: pointer; font-size: .875rem; font-weight: 500; }
+.filter-panel[open] summary { margin-bottom: 10px; }
+.filter-range { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin: 0 0 10px; }
+.filter-range .search-field { flex: 1 1 140px; }
+.filter-range .search-field input { padding-left: 12px; min-height: 30px; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .toolbar .search { margin: 0; flex: 1 1 340px; }
 .component-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }

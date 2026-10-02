@@ -16,7 +16,7 @@ A broad class such as microcontroller board, capacitor, resistor, connector, sen
 _Avoid_: Category when referring to a physical storage group
 
 **Attribute**:
-A family-specific fact used to distinguish variants, such as capacitance, voltage rating, package, interface or connector pitch.
+A family-specific fact used to distinguish variants, such as capacitance, voltage rating, package, interface or connector pitch. A resistor's or capacitor's value is compared by magnitude, so `100n` and `0.1u` describe the same variant.
 
 **Storage location**:
 A permanently coded drawer, box or other physical home where items are normally returned.

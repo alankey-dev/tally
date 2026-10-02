@@ -56,6 +56,18 @@ FAMILIES = {
 }
 
 
+def item_summary(row):
+    """A short description of a variant, such as 4.7 kΩ · 0805, from its value, voltage and package."""
+    try:
+        attributes = json.loads(row["attributes"] or "{}")
+    except (ValueError, TypeError):
+        attributes = {}
+    if not isinstance(attributes, dict):
+        return ""
+    get = lambda key: str(attributes.get(key) or "").strip()
+    return " · ".join(part for part in (f"{get('value')} {get('value_unit')}".strip(), get("voltage"), get("package")) if part)
+
+
 def classify(query):
     best_key, best_score = "generic", 0
     for key, family in FAMILIES.items():

@@ -17,17 +17,50 @@
   <form class="search" autocomplete="off" aria-label="Search components" role="search">
     <div class="search-field">
       {{ icon('search') }}
-      <input id="inventory-search" name="q" value="{{query}}" placeholder="Search by name, part number, or location">
+      <input id="inventory-search" name="q" value="{{query}}" placeholder="Search by name, part number, value or location">
       <div id="search-suggestions" class="suggestions" hidden></div>
     </div>
     <input type="hidden" name="view" value="{{view}}">
+    {% for name, value in filters.items() if name not in ('q', 'view') and value %}<input type="hidden" name="{{name}}" value="{{value}}">{% endfor %}
     <button>Search</button>
   </form>
   <div class="segmented" aria-label="Component display">
-    <a href="{{url_for('items', q=query, view='tiles')}}"{% if view == 'tiles' %} aria-current="true"{% endif %}>Tiles</a>
-    <a href="{{url_for('items', q=query, view='list')}}"{% if view == 'list' %} aria-current="true"{% endif %}>List</a>
+    <a href="{{url_for('items', **dict(filters, view=None))}}"{% if view == 'tiles' %} aria-current="true"{% endif %}>Tiles</a>
+    <a href="{{url_for('items', **dict(filters, view='list'))}}"{% if view == 'list' %} aria-current="true"{% endif %}>List</a>
   </div>
 </div>
+
+<nav class="filter-chips" aria-label="Component family">
+  <a href="{{url_for('items', **dict(filters, family=None))}}"{% if not family %} aria-current="true"{% endif %}>All</a>
+  {% for key, label, count in families %}
+  <a href="{{url_for('items', q=query or None, view=filters['view'], family=None if key == family else key)}}"{% if key == family %} aria-current="true"{% endif %}>{{label}} <span class="badge neutral">{{count}}</span></a>
+  {% endfor %}
+</nav>
+{% if chips or can_range %}
+<details class="filter-panel"{% if filtering %} open{% endif %}>
+  <summary>Filters</summary>
+  {% for chip in chips if chip['values'] %}
+  <div class="filter-chips" role="group" aria-label="{{chip['label']}}">
+    <strong>{{chip['label']}}</strong>
+    {% for value, count in chip['values'] %}
+    {% set active = filters.get('attr_' ~ chip['key']) and compact(filters['attr_' ~ chip['key']]) == compact(value) %}
+    <a href="{{url_for('items', **dict(filters, **{'attr_' ~ chip['key']: None if active else value}))}}"{% if active %} aria-current="true"{% endif %}>{{value}} <span class="badge neutral">{{count}}</span></a>
+    {% endfor %}
+    {% if chip['more'] %}<a href="{{url_for('items', **dict(filters, more=chip['key']))}}">More</a>{% endif %}
+  </div>
+  {% endfor %}
+  {% if can_range %}
+  <form class="filter-range" aria-label="Value range">
+    <input type="hidden" name="q" value="{{query}}"><input type="hidden" name="view" value="{{view}}"><input type="hidden" name="family" value="{{family}}">
+    {% for name, value in filters.items() if name.startswith('attr_') %}<input type="hidden" name="{{name}}" value="{{value}}">{% endfor %}
+    <div class="search-field"><input name="min" value="{{filters.get('min') or ''}}" placeholder="From, e.g. 10u" aria-label="From"></div>
+    <div class="search-field"><input name="max" value="{{filters.get('max') or ''}}" placeholder="To, e.g. 1k" aria-label="To"></div>
+    <button class="button small">Apply</button>
+  </form>
+  {% endif %}
+  {% if filtering %}<a href="{{url_for('items', q=query or None, view=filters['view'], family=family)}}">Clear filters</a>{% endif %}
+</details>
+{% endif %}
 
 {% if view == 'tiles' %}
 <section class="component-grid">
@@ -40,7 +73,7 @@
     {% endif %}
     <div class="component-card-body">
       <a href="{{url_for('item_detail', item_id=item['id'])}}" class="component-title">{{item['name']}}</a>
-      <p>{{item['part_number'] or item['manufacturer'] or 'No part number'}}</p>
+      <p>{{item['summary'] or item['part_number'] or item['manufacturer'] or 'No part number'}}</p>
       <div class="component-meta">
         <code>{{item['code']}}</code>
         {% if item['attachment_count'] %}{{ icon('file', 'small') }}<span class="visually-hidden">Has attachments</span>{% endif %}
@@ -61,7 +94,7 @@
     <tbody>
       {% for item in items %}
       <tr>
-        <td data-label="Component"><a href="{{url_for('item_detail', item_id=item['id'])}}">{{item['name']}}</a>{% if item['manufacturer'] %}<small>{{item['manufacturer']}}</small>{% endif %}{% if item['attachment_count'] %}<small>{{ icon('file', 'small') }}Has attachments</small>{% endif %}</td>
+        <td data-label="Component"><a href="{{url_for('item_detail', item_id=item['id'])}}">{{item['name']}}</a>{% if item['summary'] %}<small>{{item['summary']}}</small>{% endif %}{% if item['manufacturer'] %}<small>{{item['manufacturer']}}</small>{% endif %}{% if item['attachment_count'] %}<small>{{ icon('file', 'small') }}Has attachments</small>{% endif %}</td>
         <td data-label="Part number">{{item['part_number'] or 'Not set'}}</td>
         <td data-label="Location"><code>{{item['code']}}</code><small>{{item['location_label']}}</small></td>
         <td data-label="On hand" class="num">{{ qty(item) }}</td>

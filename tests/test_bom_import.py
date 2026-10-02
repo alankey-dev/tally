@@ -7,7 +7,8 @@ from pathlib import Path
 from unittest import mock
 
 import app.main as main
-from app.bom import expand_designators, value_text
+from app.bom import expand_designators
+from app.matching import normalise, rewrite_values
 
 HEADER = "Reference,Value,Footprint,Qty,MPN,LCSC Part #\n"
 
@@ -178,14 +179,8 @@ class BomParserTests(unittest.TestCase):
         self.assertEqual(expand_designators("R1 - R2"), ["R1", "R2"])
         self.assertEqual(expand_designators(""), [])
 
-    def test_value_text_writes_values_one_way(self):
-        for written in ("10k", "10K", "10kΩ", "10 kΩ", "10k ohm"):
-            self.assertEqual(value_text(written).split(), ["10", "k"], written)
-        for written in ("4k7", "4K7"):
-            self.assertEqual(value_text(written).split(), ["4.7", "k"])
-        for written in ("4R7", "4.7Ω"):
-            self.assertEqual(value_text(written).split(), ["4.7"])
-        for written in ("100n", "100nF", "100 nF"):
-            self.assertEqual(value_text(written).split(), ["100", "n"])
-        for written in ("10u", "10uF", "10µF", "10 μF"):
-            self.assertEqual(value_text(written).split(), ["10", "u"])
+    def test_values_are_written_one_way(self):
+        for tokens, written in ((["10k"], ("10k", "10K", "10kΩ", "10 kΩ", "10k ohm")), (["4k7"], ("4k7", "4K7", "4.7k")),
+                                (["4r7"], ("4R7", "4.7Ω")), (["100n"], ("100n", "100nF", "100 nF")), (["10u"], ("10u", "10uF", "10µF", "10 μF"))):
+            for text in written:
+                self.assertEqual(normalise(rewrite_values(text)), tokens, text)

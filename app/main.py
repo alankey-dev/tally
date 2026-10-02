@@ -28,10 +28,10 @@ from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.barcode.qr import QrCodeWidget
 from app.webhooks import init_outbox, enqueue_event, start_worker
 from app import providers as part_providers
-from app.matching import ranked, suggested_homes
+from app.matching import parse_value, suggested_homes, value_ranked
 from app.bag_labels import parse_bag_label
 from app.bom import TEXT_FIELDS, package_of, parse_bom, prepare_items, match_line
-from app.catalogue import FAMILIES, classify, common_suggestions, parse_catalogue
+from app.catalogue import FAMILIES, classify, common_suggestions, item_summary, parse_catalogue
 
 DB_PATH = Path(os.environ.get("STORAGE_DB", "data/storage.db"))
 UPLOAD_DIR = Path(os.environ.get("STORAGE_UPLOADS", "data/uploads"))
@@ -438,13 +438,65 @@ def items():
     view = request.args.get("view", "tiles")
     if view not in {"tiles", "list"}:
         view = "tiles"
+    family = request.args.get("family") if request.args.get("family") in FAMILIES else None
     sql = "SELECT i.*, l.code, l.label AS location_label, (SELECT COUNT(*) FROM attachments a WHERE a.item_id=i.id OR (i.catalogue_id IS NOT NULL AND a.catalogue_id=i.catalogue_id)) AS attachment_count FROM items i JOIN locations l ON l.id=i.location_id"
     args = []
-    if query:
-        sql += " WHERE i.name LIKE ? OR i.part_number LIKE ? OR l.code LIKE ?"
-        args = [f"%{query}%"] * 3
-    sql += " ORDER BY i.name COLLATE NOCASE"
-    return render_template("items.html", items=db().execute(sql, args).fetchall(), query=query, view=view)
+    if family:
+        sql += " WHERE i.family = ?"
+        args.append(family)
+    rows = db().execute(sql + " ORDER BY i.name COLLATE NOCASE", args).fetchall()
+    in_family = [{**row, "attributes": item_attributes(row)} for row in map(dict, rows)] if family else []
+    shown = value_ranked(query, rows) if query else [dict(row) for row in rows]
+    filters = {"q": query or None, "view": view if view != "tiles" else None, "family": family}
+    fields = [field for field in FAMILIES[family]["fields"] if field[0] not in ("value", "value_unit")] if family else []
+    compact = lambda text: re.sub(r"\s+", "", str(text)).casefold()
+    for key, label, *_ in fields:
+        wanted = request.args.get(f"attr_{key}", "")
+        if wanted:
+            filters[f"attr_{key}"] = wanted
+            shown = [row for row in shown if compact(item_attributes(row).get(key, "")) == compact(wanted)]
+    unit = {"capacitor": "F", "resistor": "Ω"}.get(family)
+    limits = [request.args.get(name, "").strip() for name in ("min", "max")]
+    if any(limits):
+        bounds = [parse_value(limit, unit) if limit else None for limit in limits] if unit else [None, None]
+        if not unit or any(limit and bound is None for limit, bound in zip(limits, bounds)):
+            flash("Choose the Resistor or Capacitor family and a value such as 10u or 4k7 to filter by range.", "error")
+        else:
+            low, high = bounds
+            if None not in bounds and low > high:
+                low, high = high, low
+            filters.update(min=limits[0] or None, max=limits[1] or None)
+            shown = [row for row in shown if row_value(row, unit) is not None and (low is None or row_value(row, unit) >= low) and (high is None or row_value(row, unit) <= high)]
+    chips = []
+    for key, label, *_ in fields:
+        counts = {}
+        for row in in_family:
+            text = row["attributes"].get(key, "").strip()
+            if text:
+                counts.setdefault(compact(text), {}).setdefault(text, 0)
+                counts[compact(text)][text] += 1
+        values = sorted(((max(texts, key=texts.get), sum(texts.values())) for texts in counts.values()), key=lambda pair: (-pair[1], pair[0].casefold()))
+        chips.append({"key": key, "label": label, "values": values if request.args.get("more") == key else values[:8], "more": len(values) > 8 and request.args.get("more") != key})
+    for row in shown:
+        row["summary"] = item_summary(row)
+    families = [(key, FAMILIES[key]["label"], count) for key, count in db().execute("SELECT family, count(*) FROM items GROUP BY family").fetchall() if key in FAMILIES]
+    return render_template("items.html", items=shown, query=query, view=view, family=family, families=families, chips=chips, filters=filters, compact=compact, can_range=bool(unit),
+                           filtering=any(name.startswith("attr_") or name in ("min", "max") for name in filters if filters[name]))
+
+
+def item_attributes(row):
+    """An item's attributes as text, or nothing when the stored JSON is not an object."""
+    try:
+        attributes = json.loads(row["attributes"] or "{}")
+    except (ValueError, TypeError):
+        return {}
+    return {str(key): str(value) for key, value in attributes.items()} if isinstance(attributes, dict) else {}
+
+
+def row_value(row, unit):
+    """The number in an item's value and unit attributes, or None."""
+    attributes = item_attributes(row)
+    return parse_value(f"{attributes.get('value', '')} {attributes.get('value_unit', '')}", unit)
 
 @app.route("/stock")
 def stock():
@@ -520,7 +572,7 @@ def search():
 def find_stock(query):
     rows = db().execute("""SELECT i.*, l.code, l.label FROM items i
         JOIN locations l ON l.id=i.location_id ORDER BY i.name COLLATE NOCASE""").fetchall()
-    return ranked(query, rows, lambda row: " ".join(row[key] or "" for key in ("name", "manufacturer", "part_number", "code")))
+    return [{**row, "summary": item_summary(row)} for row in value_ranked(query, rows)]
 
 
 def scan_values():
