@@ -40,6 +40,13 @@ _Avoid_: Line (that means a bill of materials row), purchase order
 **On order**:
 An order entry that has been placed but not yet received.
 
+**Attachment**:
+A labelled file or link kept with an item or shared through its catalogue entry.
+_Avoid_: Document, file
+
+**Catalogue entry**:
+A known part that quick add prefills from. Attachments are shared per catalogue entry, not per component family.
+
 **Stock movement**:
 A dated increase or decrease to an item’s on-hand quantity.
 

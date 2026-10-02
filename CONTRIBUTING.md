@@ -50,6 +50,8 @@ A file needs a designator column and a value, MPN or supplier code column. A fil
 
 ## Sharing a parts catalogue
 
+New upload types go through an allowlist with a first-bytes check, never the browser's claimed type alone.
+
 Quick add suggests known parts from a catalogue kept in the database. It starts from `app/catalogue.json`; replace or extend it under **Settings → Quick add catalogue** by uploading a file or entering a URL (the URL is remembered, so one click refreshes it). Entries are matched by name, so re-importing updates them.
 
 A JSON catalogue is a list of items, or an object with an `items` list. Each item needs a `name` and can have a `family` (one of the component families in `app/catalogue.py`, otherwise `generic`), `manufacturer`, `part_number` and an `attributes` object keyed by that family's field names. A CSV catalogue needs a `name` column; `family`, `manufacturer` and `part_number` are optional, and every other column becomes an attribute. **Download catalogue** exports the current catalogue in the JSON format.

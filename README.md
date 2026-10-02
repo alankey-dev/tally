@@ -17,6 +17,7 @@ Tally is a self-hosted inventory for an electronics workshop. One container, one
 - **Permanent homes.** Every part has a coded drawer or box. Search by name, part number, or location code.
 - **Low stock.** Set a minimum and the dashboard flags it, and the Order list suggests what to buy.
 - **Order list.** Turn low stock and project shortages into order entries, export them as CSV or Mouser part-list text, mark them ordered with a supplier and expected date, then tap Received to put the stock in.
+- **Attachments.** Attach a datasheet PDF, a pinout photo or a link to any item, and open it with one tap. Share one with every item made from the same quick add catalogue entry. Components marked with a file icon have attachments.
 - **Projects.** Keep each build's bill of materials, see how many you can build from stock and which lines fall short, then build ×N to take every part in one go. Undo if you change your mind. Import a KiCad, EasyEDA or JLCPCB BOM CSV and match it to your items. Export the BOM as CSV or PDF.
 - **Webhooks.** Send app events to external services, or locate an item with a drawer LED controller. Subscribe to individual events or all events. See [webhook events and payloads](docs/webhooks.md).
 - **Live display.** Open the dashboard on a spare tablet; it refreshes when anything changes.
@@ -61,7 +62,7 @@ Prefer to start from a ready-made layout? Set `TALLY_LAYOUT=example` before the 
 | `SECRET_KEY` | generated | Signs the session cookie. If unset, one is generated and kept in the data volume. |
 | `TALLY_LAYOUT` | empty | Storage to create on first run: `example`, or a path to a JSON layout. |
 | `STORAGE_DB` | `/data/storage.db` | SQLite database path. |
-| `STORAGE_UPLOADS` | `/data/uploads` | Uploaded images. |
+| `STORAGE_UPLOADS` | `/data/uploads` | Uploaded images and attachments. |
 
 Copy `.env.example` to `.env` to set these with Compose.
 
@@ -71,9 +72,11 @@ QR labels open the address you reached Tally at, which a phone may not be able t
 
 Tally has one shared password, not user accounts. Before it is reachable from outside your network, put it behind a reverse proxy with HTTPS and require sign-in. See [SECURITY.md](SECURITY.md).
 
+Attachments can be up to 20 MB, and the app waits up to 120 s for an upload to finish. Raise your proxy's upload size limit to match (nginx allows only 1 MB by default) and its timeout to at least 120 s.
+
 ## Backups
 
-**Settings → Download backup** saves the SQLite database. To include uploaded images, back up the whole volume:
+**Settings → Download backup** saves the SQLite database. **Settings → Download full backup** saves a zip of the database and the `uploads` folder with every image and attachment. Restoring from the zip is manual. To back up the whole volume instead:
 
 ```sh
 docker run --rm -v tally-data:/data -v "$PWD":/backup alpine tar czf /backup/tally-backup.tgz -C /data .

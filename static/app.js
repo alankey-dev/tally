@@ -230,4 +230,14 @@
     });
     renderCart();
   }
+
+  document.querySelectorAll('form[data-max-bytes]').forEach(form => form.addEventListener('submit', event => {
+    const file = form.querySelector('input[type="file"]').files[0];
+    const limit = Number(form.dataset.maxBytes);
+    if (!file || file.size <= limit) return;
+    event.preventDefault();
+    let note = form.querySelector('[data-size-error]');
+    if (!note) { note = document.createElement('small'); note.className = 'danger-text'; note.dataset.sizeError = ''; note.setAttribute('role', 'alert'); form.querySelector('input[type="file"]').after(note); }
+    note.textContent = `Files can be up to ${Math.round(limit / 1048576)} MB.`;
+  }));
 })();

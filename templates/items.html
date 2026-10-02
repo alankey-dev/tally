@@ -43,6 +43,7 @@
       <p>{{item['part_number'] or item['manufacturer'] or 'No part number'}}</p>
       <div class="component-meta">
         <code>{{item['code']}}</code>
+        {% if item['attachment_count'] %}{{ icon('file', 'small') }}<span class="visually-hidden">Has attachments</span>{% endif %}
         {{ qty(item) }}
       </div>
     </div>
@@ -60,7 +61,7 @@
     <tbody>
       {% for item in items %}
       <tr>
-        <td data-label="Component"><a href="{{url_for('item_detail', item_id=item['id'])}}">{{item['name']}}</a>{% if item['manufacturer'] %}<small>{{item['manufacturer']}}</small>{% endif %}</td>
+        <td data-label="Component"><a href="{{url_for('item_detail', item_id=item['id'])}}">{{item['name']}}</a>{% if item['manufacturer'] %}<small>{{item['manufacturer']}}</small>{% endif %}{% if item['attachment_count'] %}<small>{{ icon('file', 'small') }}Has attachments</small>{% endif %}</td>
         <td data-label="Part number">{{item['part_number'] or 'Not set'}}</td>
         <td data-label="Location"><code>{{item['code']}}</code><small>{{item['location_label']}}</small></td>
         <td data-label="On hand" class="num">{{ qty(item) }}</td>

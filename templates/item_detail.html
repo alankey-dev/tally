@@ -37,6 +37,42 @@
 {% endif %}
 {% if item['notes'] %}<p class="notes">{{item['notes']}}</p>{% endif %}
 
+<section class="card attachments">
+  <h2>Attachments</h2>
+  <p class="copy card-intro">Datasheets, pinouts and links</p>
+  <div class="record-list">
+    {% for a in attachments %}
+    <div class="record">
+      <div>
+        <a href="{{a['url'] or url_for('uploaded_image', filename=a['file_path'])}}" target="_blank" rel="noopener"><strong>{{a['label']}}</strong></a>
+        <small>{% if a['url'] %}{{a['url'].split('/')[2]}}{% elif a['size_bytes'] >= 1048576 %}{{'%.1f'|format(a['size_bytes'] / 1048576)}} MB{% else %}{{(a['size_bytes'] + 1023) // 1024}} KB{% endif %}</small>
+      </div>
+      <div class="record-actions">
+        <span class="badge neutral">{{'Link' if a['url'] else 'PDF' if a['mimetype'] == 'application/pdf' else 'Image'}}</span>
+        {% if a['catalogue_id'] %}<span class="badge neutral">Shared</span>{% endif %}
+        {% if can_attach %}
+        <form method="post" action="{{url_for('delete_attachment', item_id=item['id'], attachment_id=a['id'])}}">
+          {% if a['catalogue_id'] %}<details><summary>Remove</summary><button class="button small quiet danger">Remove from all {{linked_items}} items</button></details>
+          {% else %}<button class="button small quiet danger">Remove</button>{% endif %}
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="empty">No attachments yet.</div>
+    {% endfor %}
+  </div>
+  {% if can_attach %}
+  <form class="adjust" method="post" enctype="multipart/form-data" action="{{url_for('add_attachment', item_id=item['id'])}}" data-max-bytes="{{max_attachment_bytes}}">
+    <label>Label<input name="label" maxlength="120" placeholder="e.g. Datasheet"></label>
+    <label>File<input name="file" type="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/gif"></label>
+    <label>Or link<input name="url" type="url" placeholder="https://example.com/datasheet.pdf"></label>
+    {% if item['catalogue_id'] %}<label class="check"><input name="share" type="checkbox" value="1"> Share with every item from this catalogue entry</label>{% endif %}
+    <button class="button primary">Add</button>
+  </form>
+  {% endif %}
+</section>
+
 <section class="split">
   <div class="card">
     <h2>Adjust stock</h2>

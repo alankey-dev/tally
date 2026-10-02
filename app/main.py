@@ -6,6 +6,9 @@ import secrets
 import json
 import sqlite3
 import csv
+import re
+import tempfile
+import zipfile
 import threading
 import urllib.request
 from io import BytesIO
@@ -14,6 +17,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from flask import Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, url_for, session, send_file, send_from_directory
+from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.security import check_password_hash, generate_password_hash
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -38,6 +42,7 @@ DEFAULT_CATALOGUE = Path(__file__).parent / "catalogue.json"
 MAX_CATALOGUE_BYTES = 5 * 1024 * 1024
 MAX_BOM_BYTES = 5 * 1024 * 1024
 MAX_BOM_LINES = 300
+MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
 def secret_key():
     """Use SECRET_KEY when set; otherwise generate one beside the database and keep it."""
@@ -61,6 +66,9 @@ def secret_key():
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.config.update(SECRET_KEY=secret_key(), SESSION_COOKIE_SAMESITE="Lax")
 ALLOWED_IMAGE_TYPES = {"image/svg+xml": ".svg", "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
+ATTACHMENT_TYPES = {"application/pdf": ".pdf", "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
+# First bytes of each attachment type. The browser's claimed type is ignored, since some Android pickers send PDFs as octet-stream.
+ATTACHMENT_SIGNATURES = [(rb"%PDF-", "application/pdf", ".pdf"), (rb"\x89PNG\r\n\x1a\n", "image/png", ".png"), (rb"\xff\xd8\xff", "image/jpeg", ".jpg"), (rb"GIF8", "image/gif", ".gif"), (rb"RIFF.{4}WEBP", "image/webp", ".webp")]
 
 def db():
     if "db" not in g:
@@ -90,6 +98,22 @@ def init_db():
     CREATE UNIQUE INDEX IF NOT EXISTS order_entries_one_wanted ON order_entries(item_id) WHERE status='wanted';
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS catalogue (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, family TEXT NOT NULL DEFAULT 'generic', manufacturer TEXT DEFAULT '', part_number TEXT DEFAULT '', attributes TEXT NOT NULL DEFAULT '{}');
+    CREATE TABLE IF NOT EXISTS attachments (
+      id INTEGER PRIMARY KEY,
+      item_id INTEGER REFERENCES items(id),
+      catalogue_id INTEGER REFERENCES catalogue(id),
+      label TEXT NOT NULL,
+      file_path TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL DEFAULT '',
+      mimetype TEXT NOT NULL DEFAULT '',
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      CHECK ((item_id IS NULL) != (catalogue_id IS NULL)),
+      CHECK ((file_path = '') != (url = ''))
+    );
+    CREATE INDEX IF NOT EXISTS attachments_item ON attachments(item_id);
+    CREATE INDEX IF NOT EXISTS attachments_catalogue ON attachments(catalogue_id);
+    CREATE INDEX IF NOT EXISTS attachments_file ON attachments(file_path);
     """)
     item_columns = {row["name"] for row in conn.execute("PRAGMA table_info(items)")}
     if "family" not in item_columns:
@@ -143,6 +167,14 @@ def init_db():
         save_catalogue(conn, parse_catalogue(DEFAULT_CATALOGUE.read_bytes()))
         conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES ('catalogue.seeded', '1')")
     conn.commit()
+    if "catalogue_id" not in item_column_names():
+        # Link items to the catalogue entry they came from. Run after the seed, so an old database backfills against a full
+        # catalogue, and only in the transaction that adds the column, so the backfill happens once.
+        conn.execute("BEGIN IMMEDIATE")
+        if "catalogue_id" not in item_column_names():
+            conn.execute("ALTER TABLE items ADD COLUMN catalogue_id INTEGER")
+            conn.execute("UPDATE items SET catalogue_id = (SELECT c.id FROM catalogue c WHERE c.name = items.name COLLATE NOCASE)")
+        conn.commit()
 
 def load_layout(name):
     path = LAYOUT_DIR / f"{name}.json" if (LAYOUT_DIR / f"{name}.json").exists() else Path(name)
@@ -165,13 +197,24 @@ def seed_layout(conn, layout, existing=False):
 
 def save_catalogue(conn, entries, replace=False):
     """Add or update catalogue entries by name, keeping the ids that quick add links to."""
-    if replace:
-        conn.execute("DELETE FROM catalogue")
     conn.executemany(
         """INSERT INTO catalogue(name, family, manufacturer, part_number, attributes) VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(name) DO UPDATE SET family=excluded.family, manufacturer=excluded.manufacturer, part_number=excluded.part_number, attributes=excluded.attributes""",
+           ON CONFLICT(name) DO UPDATE SET name=excluded.name, family=excluded.family, manufacturer=excluded.manufacturer, part_number=excluded.part_number, attributes=excluded.attributes""",
         [(entry["name"], entry["family"], entry["manufacturer"], entry["part_number"], json.dumps(entry["attributes"], ensure_ascii=False)) for entry in entries],
     )
+    if replace:
+        kept = {entry["name"].casefold() for entry in entries}
+        dropped = [row["id"] for row in conn.execute("SELECT id, name FROM catalogue") if row["name"].casefold() not in kept]
+        for entry_id in dropped:
+            # Shared attachments go down to each linked item, which then keeps them on its own.
+            conn.execute(
+                """INSERT INTO attachments(item_id, label, file_path, url, mimetype, size_bytes, created_at)
+                   SELECT i.id, a.label, a.file_path, a.url, a.mimetype, a.size_bytes, a.created_at
+                   FROM attachments a JOIN items i ON i.catalogue_id=a.catalogue_id WHERE a.catalogue_id=?""", (entry_id,))
+            conn.execute("DELETE FROM attachments WHERE catalogue_id=?", (entry_id,))
+            # An id can be reused by a later entry, so unlink every item whether or not it had attachments.
+            conn.execute("UPDATE items SET catalogue_id=NULL WHERE catalogue_id=?", (entry_id,))
+            conn.execute("DELETE FROM catalogue WHERE id=?", (entry_id,))
 
 def catalogue_entries():
     rows = db().execute("SELECT * FROM catalogue ORDER BY name COLLATE NOCASE")
@@ -206,7 +249,7 @@ def ensure_database():
     public_endpoints = {"access", "logout", "static"}
     if auth_enabled() and request.endpoint not in public_endpoints and (not password or session.get("access_unlocked") != access_token(password["value"])):
         return redirect(url_for("access", next=request.full_path))
-    restricted = {"new_item": "add_components", "export_inventory": "exports", "export_bom": "exports", "export_orders": "exports", "location_labels_pdf": "exports", "item_label_pdf": "exports"}
+    restricted = {"new_item": "add_components", "export_inventory": "exports", "export_bom": "exports", "export_orders": "exports", "location_labels_pdf": "exports", "item_label_pdf": "exports", "add_attachment": "edit_components", "delete_attachment": "edit_components"}
     if request.endpoint in restricted and not enabled(restricted[request.endpoint]):
         abort(403)
     if request.endpoint == "item_detail" and request.method == "POST" and not enabled("edit_components"):
@@ -229,18 +272,32 @@ def expected_date(value):
 def feature_context():
     return {"images_enabled": enabled("images"), "auth_enabled": auth_enabled(), "exports_enabled": enabled("exports")}
 
-def image_upload(field_name):
-    """Save a user-supplied component/location image under an unguessable local name."""
+def save_upload(field_name, allowed, signatures=None):
+    """Save an upload under an unguessable local name and return it with its type, or None if nothing was sent.
+    With signatures, the type comes from the file's first bytes and the browser's claim is ignored."""
     upload = request.files.get(field_name)
     if not upload or not upload.filename:
-        return ""
-    suffix = ALLOWED_IMAGE_TYPES.get(upload.mimetype)
-    if not suffix:
-        raise ValueError("Use an SVG, PNG, JPEG, WebP, or GIF image.")
+        return None
+    if signatures:
+        head = upload.stream.read(16)
+        upload.stream.seek(0)
+        mimetype, suffix = next(((kind, ext) for pattern, kind, ext in signatures if re.match(pattern, head, re.DOTALL)), (None, None))
+        if mimetype not in allowed:
+            raise ValueError("Use a PDF, PNG, JPEG, WebP or GIF. On iPhone, pick the photo from Photos rather than Files.")
+    else:
+        mimetype = upload.mimetype
+        suffix = allowed.get(mimetype)
+        if not suffix:
+            raise ValueError("Use an SVG, PNG, JPEG, WebP, or GIF image.")
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid.uuid4().hex}{suffix}"
     upload.save(UPLOAD_DIR / filename)
-    return filename
+    return filename, mimetype
+
+def image_upload(field_name):
+    """Save a user-supplied component/location image under an unguessable local name."""
+    saved = save_upload(field_name, ALLOWED_IMAGE_TYPES)
+    return saved[0] if saved else ""
 
 def valid_webhook_url(value):
     parsed = urlparse(value)
@@ -367,7 +424,7 @@ def items():
     view = request.args.get("view", "tiles")
     if view not in {"tiles", "list"}:
         view = "tiles"
-    sql = "SELECT i.*, l.code, l.label AS location_label FROM items i JOIN locations l ON l.id=i.location_id"
+    sql = "SELECT i.*, l.code, l.label AS location_label, (SELECT COUNT(*) FROM attachments a WHERE a.item_id=i.id OR (i.catalogue_id IS NOT NULL AND a.catalogue_id=i.catalogue_id)) AS attachment_count FROM items i JOIN locations l ON l.id=i.location_id"
     args = []
     if query:
         sql += " WHERE i.name LIKE ? OR i.part_number LIKE ? OR l.code LIKE ?"
@@ -564,6 +621,7 @@ def version():
            UNION ALL SELECT created_at FROM order_entries
            UNION ALL SELECT ordered_at FROM order_entries
            UNION ALL SELECT received_at FROM order_entries
+           UNION ALL SELECT value FROM settings WHERE key='attachments.changed'
         )"""
     ).fetchone()["value"]
     return jsonify(version=marker)
@@ -617,7 +675,7 @@ def new_item():
             except ValueError as exc:
                 flash(str(exc), "error")
                 return render_template("item_form.html", item=None, locations=locations, selected_location=suggested_location, suggested_name=initial["name"], suggested_manufacturer=initial.get("manufacturer", ""), suggested_part_number=initial.get("part_number", ""), suggested_attributes=initial.get("attributes", {}), families=FAMILIES, family_homes=layout_setting("family_homes"), selected_family=selected_family, scanned=scanned)
-            cur = conn.execute("INSERT INTO items(name, manufacturer, part_number, quantity, unit, minimum_quantity, location_id, notes, image_path, updated_at, family, attributes, supplier, supplier_sku) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (name, manufacturer, part_number, quantity, request.form.get("unit", "pcs").strip() or "pcs", minimum, location_id, request.form.get("notes", "").strip(), image_path, now, selected_family, json.dumps(attributes, ensure_ascii=False), scanned["supplier"], scanned["supplier_sku"]))
+            cur = conn.execute("INSERT INTO items(name, manufacturer, part_number, quantity, unit, minimum_quantity, location_id, notes, image_path, updated_at, family, attributes, supplier, supplier_sku, catalogue_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (name, manufacturer, part_number, quantity, request.form.get("unit", "pcs").strip() or "pcs", minimum, location_id, request.form.get("notes", "").strip(), image_path, now, selected_family, json.dumps(attributes, ensure_ascii=False), scanned["supplier"], scanned["supplier_sku"], suggestion["id"] if suggestion else None))
             if quantity: conn.execute("INSERT INTO movements(item_id, quantity_change, reason, occurred_at) VALUES (?, ?, ?, ?)", (cur.lastrowid, quantity, "Initial stock", now))
             dispatch_webhooks("item.created", item_payload(cur.lastrowid))
             if quantity:
@@ -662,8 +720,15 @@ def item_detail(item_id):
         attributes = {}
     family = FAMILIES.get(item["family"], FAMILIES["generic"])
     attribute_labels = {field[0]: field[1] for field in family["fields"]}
+    entry_id = item["catalogue_id"]
+    attachments = conn.execute("SELECT * FROM attachments WHERE item_id=? OR (? IS NOT NULL AND catalogue_id=?) ORDER BY id", (item_id, entry_id, entry_id)).fetchall()
+    linked_items = conn.execute("SELECT COUNT(*) FROM items WHERE catalogue_id=?", (entry_id,)).fetchone()[0] if entry_id else 0
     return render_template(
         "item_detail.html",
+        attachments=attachments,
+        linked_items=linked_items,
+        can_attach=enabled("edit_components"),
+        max_attachment_bytes=MAX_ATTACHMENT_BYTES,
         item=item,
         movements=movements,
         attributes=attributes,
@@ -742,7 +807,84 @@ def new_location():
 
 @app.route("/uploads/<path:filename>")
 def uploaded_image(filename):
-    return send_from_directory(UPLOAD_DIR, filename)
+    attachment = db().execute("SELECT label FROM attachments WHERE file_path=? LIMIT 1", (filename,)).fetchone()
+    name = f"{attachment['label']}{Path(filename).suffix}" if attachment else None
+    response = send_from_directory(UPLOAD_DIR, filename, download_name=name)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    if response.mimetype != "application/pdf":
+        response.headers["Content-Security-Policy"] = "sandbox"
+    return response
+
+def touch_attachments(conn):
+    """Move the live-refresh marker without touching any item."""
+    conn.execute("INSERT INTO settings(key, value) VALUES ('attachments.changed', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (datetime.now(timezone.utc).isoformat(),))
+
+@app.route("/items/<int:item_id>/attachments", methods=["POST"])
+def add_attachment(item_id):
+    conn = db()
+    item = conn.execute("SELECT id, catalogue_id FROM items WHERE id=?", (item_id,)).fetchone()
+    if not item: abort(404)
+    back = redirect(url_for("item_detail", item_id=item_id))
+    # Raise the cap for this request only, before the body is read, so other uploads keep their limits.
+    request.max_content_length = MAX_ATTACHMENT_BYTES
+    try:
+        label, url, share = request.form.get("label", "").strip()[:120], request.form.get("url", "").strip(), request.form.get("share")
+        upload = request.files.get("file")
+    except RequestEntityTooLarge:
+        flash("Files can be up to 20 MB.", "error")
+        return back
+    has_file = bool(upload and upload.filename)
+    if has_file and url:
+        flash("Choose a file or a link, not both.", "error")
+        return back
+    if not has_file and not url:
+        flash("Choose a file or a link.", "error")
+        return back
+    if url and not valid_webhook_url(url):
+        flash("Enter a valid http(s) link.", "error")
+        return back
+    label = label or (Path(upload.filename).stem[:120] if has_file else "") or "Datasheet"
+    filename, mimetype, size = "", "", 0
+    if has_file:
+        try:
+            filename, mimetype = save_upload("file", ATTACHMENT_TYPES, ATTACHMENT_SIGNATURES)
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return back
+        size = (UPLOAD_DIR / filename).stat().st_size
+    shared = bool(share and item["catalogue_id"])
+    try:
+        conn.execute("INSERT INTO attachments(item_id, catalogue_id, label, file_path, url, mimetype, size_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (None if shared else item_id, item["catalogue_id"] if shared else None, label, filename, url, mimetype, size, datetime.now(timezone.utc).isoformat()))
+        touch_attachments(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        if filename: (UPLOAD_DIR / filename).unlink(missing_ok=True)
+        raise
+    flash("Attachment added.", "success")
+    return back
+
+@app.route("/items/<int:item_id>/attachments/<int:attachment_id>/delete", methods=["POST"])
+def delete_attachment(item_id, attachment_id):
+    conn = db()
+    leftover = None
+    with conn:
+        # Take the write lock first and make the delete the guard, so a second tap waits and then finds nothing to remove.
+        conn.execute("BEGIN IMMEDIATE")
+        item = conn.execute("SELECT catalogue_id FROM items WHERE id=?", (item_id,)).fetchone()
+        if not item: abort(404)
+        row = conn.execute("SELECT * FROM attachments WHERE id=?", (attachment_id,)).fetchone()
+        if row and row["item_id"] != item_id and (row["catalogue_id"] is None or row["catalogue_id"] != item["catalogue_id"]):
+            abort(404)
+        removed = conn.execute("DELETE FROM attachments WHERE id=?", (attachment_id,)).rowcount
+        if removed:
+            touch_attachments(conn)
+            if row["file_path"] and not conn.execute("SELECT 1 FROM attachments WHERE file_path=?", (row["file_path"],)).fetchone():
+                leftover = row["file_path"]
+    if leftover:
+        (UPLOAD_DIR / leftover).unlink(missing_ok=True)
+    flash("Attachment removed." if removed else "That attachment was already removed.", "success" if removed else "error")
+    return redirect(url_for("item_detail", item_id=item_id))
 
 @app.route("/projects", methods=["GET", "POST"])
 def projects():
@@ -1388,6 +1530,7 @@ def import_catalogue():
         return redirect(url_for("settings", section="catalogue"))
     conn = db()
     with conn:
+        conn.execute("BEGIN IMMEDIATE")
         save_catalogue(conn, entries, replace=bool(request.form.get("replace")))
         if url and not (upload and upload.filename):
             conn.execute("INSERT INTO settings(key, value) VALUES ('catalogue.url', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (url,))
@@ -1493,3 +1636,25 @@ def download_backup():
         abort(404)
     dispatch_webhooks("export.created", {"filename": "tally-backup.sqlite3", "format": "sqlite3"})
     return send_file(DB_PATH, mimetype="application/x-sqlite3", as_attachment=True, download_name="tally-backup.sqlite3")
+
+@app.route("/settings/backup.zip")
+def download_full_backup():
+    """The database and every uploaded file in one zip. Temporary files live beside the database, which has the room."""
+    if not DB_PATH.exists():
+        abort(404)
+    handle, copy = tempfile.mkstemp(dir=DB_PATH.parent, suffix=".sqlite3")
+    os.close(handle)
+    handle, archive = tempfile.mkstemp(dir=DB_PATH.parent, suffix=".zip")
+    os.close(handle)
+    snapshot = sqlite3.connect(copy)
+    db().backup(snapshot)
+    snapshot.close()
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+        bundle.write(copy, "tally-backup.sqlite3")
+        for path in sorted(UPLOAD_DIR.iterdir()) if UPLOAD_DIR.is_dir() else []:
+            bundle.write(path, f"uploads/{path.name}")
+    response = send_file(archive, mimetype="application/zip", as_attachment=True, download_name="tally-full-backup.zip")
+    # A passthrough file response skips close callbacks, so turn that off to have the temporary files removed.
+    response.direct_passthrough = False
+    response.call_on_close(lambda: [Path(path).unlink(missing_ok=True) for path in (copy, archive)])
+    return response

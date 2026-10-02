@@ -4,7 +4,7 @@ Once this ships, you can attach a datasheet PDF, a pinout photo or a link to any
 
 | Status | Research score | Depends on |
 | --- | --- | --- |
-| Proposed | 22/30, ranked 6 of 8 | Nothing new |
+| Shipped | 22/30, ranked 6 of 8 | Nothing new |
 
 ## Why
 
