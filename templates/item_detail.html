@@ -13,6 +13,7 @@
     <strong>{{item['quantity']|qty}}</strong>
     <span>{{item['unit']}} on hand</span>
     {% if item['minimum_quantity'] is not none %}<small>Minimum {{item['minimum_quantity']|qty}} {{item['unit']}}</small>{% endif %}
+    <small>{{'Last counted ' ~ item['last_counted_at'][:10] if item['last_counted_at'] else 'Never counted'}}</small>
     {% if ordered %}<small>On order: {{ordered['quantity']|qty}} {{item['unit']}}{% if ordered['expected_on'] %}, expected {{ordered['expected_on']|expected_date}}{% endif %}</small>{% endif %}
   </div>
 </section>

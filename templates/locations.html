@@ -26,17 +26,19 @@
   <h2>{{'Search results' if query else groups.get(active, {}).get('name', active)}}</h2>
   <small>{{locations|length}} {{'location' if locations|length == 1 else 'locations'}}</small>
 </div>
+{% if active and not query and count_first %}<p><a class="button" href="{{url_for('count_location', location_id=count_first['id'], walk=1)}}">{{ icon('check') }}Count this group</a></p>{% endif %}
 <div class="drawer-list">
   {% for location in locations %}
   <details class="drawer">
     <summary>
       <code>{{location['code']}}</code>
       <span>{{location['label']}}</span>
-      <span class="badge neutral">{{location['item_count']}} {{'item' if location['item_count'] == 1 else 'items'}}</span>
+      <span class="badge neutral">{{location['item_count']}} {{'item' if location['item_count'] == 1 else 'items'}}{% if location['last_counted_at'] %} · counted {{location['last_counted_at'][:10]}}{% endif %}</span>
     </summary>
     <div class="drawer-actions">
       <a class="button small" href="{{url_for('stock', location=location['id'])}}">{{ icon('swap', 'small') }}View stock</a>
       {% if exports_enabled %}<a class="button small" target="_blank" href="{{url_for('location_labels_pdf', code=location['code'])}}">{{ icon('download', 'small') }}Print label</a>{% endif %}
+      <a class="button small" href="{{url_for('count_location', location_id=location['id'])}}">{{ icon('check', 'small') }}Count stock here</a>
       <a class="button small" href="{{url_for('items', q=location['code'])}}">{{ icon('box', 'small') }}Components here</a>
       <a class="button small" href="{{url_for('new_item', location=location['id'])}}">{{ icon('plus', 'small') }}Add component here</a>
     </div>

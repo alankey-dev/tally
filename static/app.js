@@ -231,6 +231,24 @@
     renderCart();
   }
 
+  if (document.body.hasAttribute('data-stocktake')) {
+    document.querySelectorAll('tr[data-expected]').forEach(row => {
+      const field = row.querySelector('.count-input'); const tick = row.querySelector('input[type="checkbox"]'); const expected = Number(row.dataset.expected);
+      const show = () => {
+        const out = row.querySelector('[data-variance]'); const diff = Number(field.value) - expected;
+        if (field.value === '' || !Number.isFinite(diff) || Math.abs(diff) < 1e-9) { out.innerHTML = ''; return; }
+        out.innerHTML = `<span class="badge ${diff > 0 ? 'neutral' : 'warn'}">${diff > 0 ? '+' : '-'}${formatQuantity(Math.abs(diff))}</span>`;
+      };
+      tick.addEventListener('change', () => { field.readOnly = tick.checked; if (tick.checked) field.value = row.dataset.expected; show(); });
+      field.addEventListener('input', show);
+    });
+    document.querySelector('form[method="post"]')?.addEventListener('submit', event => {
+      const bad = [...document.querySelectorAll('.count-input')].filter(field => field.validity.badInput);
+      bad.forEach(field => field.setAttribute('aria-invalid', 'true'));
+      if (bad.length) { event.preventDefault(); bad[0].focus(); }
+    });
+  }
+
   document.querySelectorAll('form[data-max-bytes]').forEach(form => form.addEventListener('submit', event => {
     const file = form.querySelector('input[type="file"]').files[0];
     const limit = Number(form.dataset.maxBytes);

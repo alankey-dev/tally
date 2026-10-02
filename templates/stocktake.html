@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}Count {{location['code']}} · Tally{% endblock %}
+{% block body_attrs %} data-stocktake{% endblock %}
+{% block content %}
+<a class="back" href="{{url_for('locations', group=location['code'].split()[0])}}">{{ icon('back', 'small') }}Storage</a>
+<section class="page-head">
+  <div>
+    <p class="eyebrow"><code>{{location['code']}}</code> {{location['label']}}</p>
+    <h1>Count stock</h1>
+    {% if location['last_counted_at'] %}<p class="lede">Last counted {{location['last_counted_at'][:10]}}</p>{% endif %}
+  </div>
+</section>
+
+{% if items %}
+<form method="post" action="{{url_for('count_location', location_id=location['id'], walk=1 if walk else None)}}">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Component</th><th class="num">Expected</th><th>Count</th><th>Matches</th><th></th></tr></thead>
+      <tbody>
+        {% for item in items %}
+        {% set error = errors.get(item['id']) %}
+        <tr data-expected="{{item['quantity']}}">
+          <td data-label="Component"><strong>{{item['name']}}</strong>{% if item['part_number'] %}<br><small>{{item['part_number']}}</small>{% endif %}</td>
+          <td data-label="Expected" class="num">{{item['quantity']|qty}} {{item['unit']}}<input type="hidden" name="expected-{{item['id']}}" value="{{item['quantity']}}"></td>
+          <td data-label="Count"><input class="count-input" type="number" min="0" step="any" inputmode="{{'numeric' if item['unit'] == 'pcs' and item['quantity'] == item['quantity']|int else 'decimal'}}" name="count-{{item['id']}}" value="{{form.get('count-' ~ item['id'], '') if form else ''}}" aria-label="Count of {{item['name']}}"{% if error %} aria-invalid="true"{% endif %}></td>
+          <td data-label="Matches"><label class="check count-match"><input type="checkbox" name="match-{{item['id']}}" value="1"{% if form and form.get('match-' ~ item['id']) %} checked{% endif %}> Matches</label></td>
+          <td data-label="Difference">{% if error %}<span class="badge danger">{{error}}</span>{% endif %}<span data-variance></span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="form-actions">
+    <button class="button primary">{{'Save and next location' if walk and has_next else 'Save count'}}</button>
+    {% if walk %}<a class="button quiet" href="{{skip}}">Skip</a><a class="button quiet" href="{{url_for('locations', group=location['code'].split()[0])}}">Stop counting</a>{% endif %}
+  </div>
+</form>
+{% else %}
+<div class="empty">Nothing should be here.</div>
+<form method="post" action="{{url_for('count_location', location_id=location['id'], walk=1 if walk else None)}}" class="form-actions">
+  <input type="hidden" name="confirm_empty" value="1">
+  <button class="button primary">Confirm empty</button>
+  {% if walk %}<a class="button quiet" href="{{skip}}">Skip</a><a class="button quiet" href="{{url_for('locations', group=location['code'].split()[0])}}">Stop counting</a>{% endif %}
+</form>
+{% endif %}
+{% endblock %}

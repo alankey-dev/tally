@@ -237,6 +237,8 @@ input[type="checkbox"] { width: 17px; height: 17px; margin: 0; accent-color: var
 .form-section > .copy { margin-bottom: 16px; }
 .guided-fields { margin: 0 0 16px; padding: 12px 14px 0; border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .guided-fields legend { padding: 0 6px; color: var(--text-2); font-size: .8125rem; font-weight: 500; }
+.count-input { width: 100%; min-height: 44px; font-size: 1.125rem; }
+.check.count-match { min-height: 44px; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
 .form .hint { margin: -8px 0 16px; }
 .optional { color: var(--text-2); font-weight: 400; }

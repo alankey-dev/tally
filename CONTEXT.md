@@ -47,6 +47,13 @@ _Avoid_: Document, file
 **Catalogue entry**:
 A known part that quick add prefills from. Attachments are shared per catalogue entry, not per component family.
 
+**Stocktake**:
+A physical count of one storage location's items. Each difference from on hand becomes a stock movement with the reason Stocktake.
+_Avoid_: Audit
+
+**Last counted**:
+When an item, or every item in a storage location, was last physically counted.
+
 **Stock movement**:
 A dated increase or decrease to an item’s on-hand quantity.
 

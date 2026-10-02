@@ -13,7 +13,7 @@ import threading
 import urllib.request
 from io import BytesIO
 from urllib.parse import urlparse
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from flask import Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, url_for, session, send_file, send_from_directory
@@ -138,6 +138,16 @@ def init_db():
         conn.execute("ALTER TABLE locations ADD COLUMN image_path TEXT DEFAULT ''")
     if "keywords" not in location_columns:
         conn.execute("ALTER TABLE locations ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
+    def location_column_names():
+        return {row["name"] for row in conn.execute("PRAGMA table_info(locations)")}
+    if "last_counted_at" not in item_column_names() or "last_counted_at" not in location_column_names():
+        # Take the write lock and check again, so a second worker does not add a column twice.
+        conn.execute("BEGIN IMMEDIATE")
+        if "last_counted_at" not in item_column_names():
+            conn.execute("ALTER TABLE items ADD COLUMN last_counted_at TEXT")
+        if "last_counted_at" not in location_column_names():
+            conn.execute("ALTER TABLE locations ADD COLUMN last_counted_at TEXT")
+        conn.commit()
     def project_columns():
         return {row["name"] for row in conn.execute("PRAGMA table_info(project_items)")}
     if "per_build" not in project_columns():
@@ -415,7 +425,11 @@ def dashboard():
     recent = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id ORDER BY i.updated_at DESC LIMIT 8").fetchall()
     low = low_stock(conn)
     projects = conn.execute("SELECT * FROM projects ORDER BY created_at DESC LIMIT 4").fetchall()
-    return render_template("dashboard.html", stats=stats, low_count=len(low), recent=recent, low=low[:8], ordered=on_order(conn), projects=projects, buildable=project_build_counts(conn))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=COUNT_DUE_DAYS)).isoformat()
+    due = conn.execute("""SELECT l.id, l.code, l.label, count(i.id) AS item_count, min(coalesce(i.last_counted_at, '')) AS oldest
+        FROM locations l JOIN items i ON i.location_id = l.id
+        GROUP BY l.id HAVING oldest < ? ORDER BY oldest, l.code""", (cutoff,)).fetchall()
+    return render_template("dashboard.html", stats=stats, low_count=len(low), recent=recent, low=low[:8], due=due[:8], due_count=len(due), ordered=on_order(conn), projects=projects, buildable=project_build_counts(conn))
 
 @app.route("/components")
 @app.route("/items")
@@ -622,6 +636,8 @@ def version():
            UNION ALL SELECT ordered_at FROM order_entries
            UNION ALL SELECT received_at FROM order_entries
            UNION ALL SELECT value FROM settings WHERE key='attachments.changed'
+           UNION ALL SELECT last_counted_at FROM items
+           UNION ALL SELECT last_counted_at FROM locations
         )"""
     ).fetchone()["value"]
     return jsonify(version=marker)
@@ -775,7 +791,8 @@ def locations():
     active = request.args.get('group', '')
     selected = select_locations(active, query)
     address = label_base_url() or request.host_url
-    return render_template("locations.html", locations=selected, groups=groups, active=active, query=query, presets=LABEL_PRESETS, default_preset=default_preset(), label_address=address, label_warning=label_address_warning(address))
+    count_first = next((row for row in selected if row['item_count']), None) if active and not query else None
+    return render_template("locations.html", locations=selected, count_first=count_first, groups=groups, active=active, query=query, presets=LABEL_PRESETS, default_preset=default_preset(), label_address=address, label_warning=label_address_warning(address))
 
 @app.route("/l/<path:code>")
 def scan_location(code):
@@ -908,6 +925,7 @@ def projects():
 
 # Quantities are floats, so a line that is exactly covered can come out a hair short; ignore differences this small.
 TOLERANCE = 1e-9
+COUNT_DUE_DAYS = 180
 MAX_BUILDS = 1_000_000
 
 def builds_wanted(values):
@@ -1120,6 +1138,101 @@ def delete_project_line(project_id, item_id):
     conn.commit()
     flash("Line removed. Stock it has already used stays in the history.", "success")
     return back_to_project(project_id)
+
+COUNT_ITEMS = "SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.location_id=? ORDER BY i.name COLLATE NOCASE"
+
+def next_to_count(conn, location):
+    """The next storage location in the same group, in drawer order, that holds items."""
+    rows = select_locations(location["code"].split()[0])
+    return next((row for row in rows if row["item_count"] and drawer_order(row) > drawer_order(location)), None)
+
+def parse_count(raw):
+    """A counted quantity from a form field, or None when it is not a finite number of zero or more."""
+    try:
+        value = float(raw.replace(",", ".", 1))
+    except ValueError:
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+@app.route("/locations/<int:location_id>/count", methods=["GET", "POST"])
+def count_location(location_id):
+    """Count what is in a storage location. Each difference becomes one stock movement, or nothing is written."""
+    conn = db()
+    location = conn.execute("SELECT * FROM locations WHERE id=?", (location_id,)).fetchone()
+    if not location:
+        abort(404)
+    walk = request.args.get("walk") == "1"
+    group = location["code"].split()[0]
+    following = next_to_count(conn, location) if walk else None
+    def show(items, errors=None, form=None):
+        skip = url_for("count_location", location_id=following["id"], walk=1) if following else url_for("locations", group=group)
+        return render_template("stocktake.html", location=location, items=items, walk=walk, skip=skip, has_next=bool(following), errors=errors or {}, form=form)
+    def finish(message, category="success"):
+        flash(message, category)
+        if not walk:
+            return redirect(url_for("locations", group=group))
+        if following:
+            return redirect(url_for("count_location", location_id=following["id"], walk=1))
+        flash(f"Finished counting {group}.", "success")
+        return redirect(url_for("locations", group=group))
+    items = conn.execute(COUNT_ITEMS, (location_id,)).fetchall()
+    if request.method == "GET":
+        return show(items)
+    now = datetime.now(timezone.utc).isoformat()
+    if request.form.get("confirm_empty"):
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            occupied = conn.execute("SELECT 1 FROM items WHERE location_id=?", (location_id,)).fetchone()
+            if not occupied:
+                conn.execute("UPDATE locations SET last_counted_at=? WHERE id=?", (now, location_id))
+        if occupied:
+            return show(conn.execute(COUNT_ITEMS, (location_id,)).fetchall())
+        return finish(f"Confirmed {location['code']} is empty.")
+    counts, errors = {}, {}
+    for item in items:
+        raw, ticked = request.form.get(f"count-{item['id']}", "").strip(), bool(request.form.get(f"match-{item['id']}"))
+        try:
+            expected = float(request.form.get(f"expected-{item['id']}", ""))
+            if not math.isfinite(expected):
+                raise ValueError()
+        except ValueError:
+            expected = item["quantity"]
+        value = parse_count(raw) if raw else None
+        if raw and value is None:
+            errors[item["id"]] = "Enter a number, zero or more."
+        elif ticked and raw and abs(value - expected) > TOLERANCE:
+            errors[item["id"]] = "Matches is ticked, but the count is different."
+        elif ticked or raw:
+            counts[item["id"]] = (expected if ticked else value, expected)
+    if errors:
+        flash("Check the marked rows. Nothing was saved.", "error")
+        return show(items, errors, request.form)
+    differences, skipped, blank = 0, [], 0
+    with conn:
+        # Hold the write lock while the quantities are read again, so a change made since the page opened is never overwritten.
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(COUNT_ITEMS, (location_id,)).fetchall()
+        for item in rows:
+            if item["id"] not in counts:
+                blank += 1
+                continue
+            counted, expected = counts[item["id"]]
+            if abs(item["quantity"] - expected) <= TOLERANCE:
+                change = counted - item["quantity"]
+                if abs(change) > TOLERANCE:
+                    record_movement(conn, item, change, "Stocktake", "stock.in" if change > 0 else "stock.out")
+                    differences += 1
+            elif abs(item["quantity"] - counted) > TOLERANCE:
+                skipped.append(item["name"])
+                continue
+            conn.execute("UPDATE items SET last_counted_at=? WHERE id=?", (now, item["id"]))
+        if rows and not blank and not skipped:
+            conn.execute("UPDATE locations SET last_counted_at=? WHERE id=?", (now, location_id))
+    done = len(rows) - blank - len(skipped)
+    message = f"Counted {done} item{'s' if done != 1 else ''} in {location['code']}: {differences} difference{'s' if differences != 1 else ''} recorded."
+    if skipped:
+        message += f" {', '.join(skipped[:3])}{f' and {len(skipped) - 3} more' if len(skipped) > 3 else ''} changed since you opened this page, count it again."
+    return finish(message, "error" if skipped else "success")
 
 @app.route("/projects/<int:project_id>/build", methods=["POST"])
 def build_project(project_id):
