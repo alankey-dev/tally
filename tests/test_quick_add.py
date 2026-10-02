@@ -126,6 +126,12 @@ class QuickAddTests(unittest.TestCase):
         self.assertEqual(response.mimetype, "text/csv")
         self.assertIn(b"Component,Manufacturer,Part number", response.data)
 
+    def test_locations_csv_report_is_downloadable(self):
+        response = self.client.get("/reports/locations.csv")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "text/csv")
+        self.assertIn(b"Code,Label,Kind,Keywords,Notes,Components", response.data)
+
 
 if __name__ == "__main__":
     unittest.main()

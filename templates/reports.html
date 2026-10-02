@@ -22,6 +22,19 @@
       <a class="button" href="{{url_for('export_inventory', format='pdf')}}">{{ icon('download') }}PDF</a>
     </div>
   </div>
+  <div class="report-card card">
+    <div>
+      {{ icon('file') }}
+      <div>
+        <h2>Storage locations</h2>
+        <p>Every storage location with its label, kind, and component count.</p>
+      </div>
+    </div>
+    <div class="button-group">
+      <a class="button" href="{{url_for('export_locations', format='csv')}}">{{ icon('download') }}CSV</a>
+      <a class="button" href="{{url_for('export_locations', format='pdf')}}">{{ icon('download') }}PDF</a>
+    </div>
+  </div>
   {% if exports_enabled %}
   <div class="report-card card">
     <div>
