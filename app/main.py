@@ -259,7 +259,7 @@ def ensure_database():
     public_endpoints = {"access", "logout", "static"}
     if auth_enabled() and request.endpoint not in public_endpoints and (not password or session.get("access_unlocked") != access_token(password["value"])):
         return redirect(url_for("access", next=request.full_path))
-    restricted = {"new_item": "add_components", "export_inventory": "exports", "export_bom": "exports", "export_orders": "exports", "location_labels_pdf": "exports", "item_label_pdf": "exports", "add_attachment": "edit_components", "delete_attachment": "edit_components"}
+    restricted = {"new_item": "add_components", "export_inventory": "exports", "export_locations": "exports", "export_bom": "exports", "export_orders": "exports", "location_labels_pdf": "exports", "item_label_pdf": "exports", "add_attachment": "edit_components", "delete_attachment": "edit_components"}
     if request.endpoint in restricted and not enabled(restricted[request.endpoint]):
         abort(403)
     if request.endpoint == "item_detail" and request.method == "POST" and not enabled("edit_components"):
@@ -1507,6 +1507,13 @@ def export_inventory(format):
         abort(404)
     rows = db().execute("SELECT i.name, i.manufacturer, i.part_number, i.quantity, i.unit, i.minimum_quantity, l.code FROM items i JOIN locations l ON l.id=i.location_id ORDER BY i.name COLLATE NOCASE").fetchall()
     return export_rows(rows, ["Component", "Manufacturer", "Part number", "On hand", "Unit", "Minimum", "Location"], "tally-inventory", format, "Inventory report")
+
+@app.route("/reports/locations.<format>")
+def export_locations(format):
+    if format not in {"csv", "pdf"}:
+        abort(404)
+    rows = db().execute("SELECT l.code, l.label, l.kind, l.keywords, l.notes, count(i.id) AS items FROM locations l LEFT JOIN items i ON i.location_id=l.id GROUP BY l.id ORDER BY l.code").fetchall()
+    return export_rows(rows, ["Code", "Label", "Kind", "Keywords", "Notes", "Components"], "tally-locations", format, "Storage locations")
 
 LABEL_PRESETS = {
     # Sizes are millimetres. Sheets give columns, rows, label size, the top-left margin and the gap between labels.
