@@ -10,3 +10,20 @@
   <hr>
   <a class="button" href="{{url_for('export_catalogue')}}">{{ icon('download') }}Download catalogue</a>
 </div>
+<div class="card">
+  <details>
+    <summary>Browse catalogue ({{catalogue_count}})</summary>
+    <div class="table-wrap" style="max-height: 28rem; overflow: auto">
+      <table>
+        <thead><tr><th>Name</th><th>Family</th><th>Manufacturer</th><th>Part number</th></tr></thead>
+        <tbody>
+          {% for entry in catalogue_entries %}
+          <tr><td>{{entry['name']}}</td><td>{{entry['family']}}</td><td>{{entry['manufacturer']}}</td><td>{{entry['part_number']}}</td></tr>
+          {% else %}
+          <tr><td colspan="4">The catalogue is empty.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</div>
