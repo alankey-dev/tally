@@ -1668,7 +1668,8 @@ def settings(section="general"):
         context["webhooks"] = db().execute("SELECT * FROM webhooks ORDER BY event, id").fetchall()
     elif section == "catalogue":
         source = db().execute("SELECT value FROM settings WHERE key='catalogue.url'").fetchone()
-        context.update(catalogue_count=db().execute("SELECT COUNT(*) FROM catalogue").fetchone()[0], catalogue_url=source["value"] if source else "")
+        entries = catalogue_entries()
+        context.update(catalogue_count=len(entries), catalogue_entries=entries, catalogue_url=source["value"] if source else "")
     elif section == "providers":
         context.update(providers=part_providers.PROVIDERS, provider_configs=provider_configs(), is_configured=part_providers.is_configured)
     elif section == "security":
