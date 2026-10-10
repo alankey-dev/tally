@@ -1,0 +1,87 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import icon %}
+{% block title %}Usage · Tally{% endblock %}
+{% macro item_link(row) %}<a href="{{url_for('item_detail', item_id=row['id'])}}">{{row['name']}}</a>{% endmacro %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Usage</h1>
+    <p>{% if report.coverage is not none %}{{report.coverage}}% of stock taken out was recorded as a checkout.{% else %}No stock was taken out in this period.{% endif %}</p>
+  </div>
+  {% if exports_enabled %}<a class="button" href="{{url_for('export_usage', days=period, group=group)}}">{{ icon('download') }}CSV</a>{% endif %}
+</section>
+
+<form class="filter-range" aria-label="Usage period">
+  <label>Period
+    <select name="days" onchange="this.form.submit()">
+      {% for value, text in (('30', '30 days'), ('90', '90 days'), ('365', '1 year'), ('all', 'All time')) %}<option value="{{value}}"{% if value == period %} selected{% endif %}>{{text}}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Storage group
+    <select name="group" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for code in groups %}<option value="{{code}}"{% if code == group %} selected{% endif %}>{{code}}</option>{% endfor %}
+    </select>
+  </label>
+  <noscript><button class="button small">Apply</button></noscript>
+</form>
+
+<section class="stack">
+  <div>
+    <div class="section-head"><h2>Most used</h2></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Component</th><th>Location</th><th class="num">Checkouts</th><th class="num">Taken out</th><th>Last</th></tr></thead>
+      <tbody>
+        {% for row in report.most %}
+        <tr><td data-label="Component">{{item_link(row)}}</td><td data-label="Location">{{row['code']}}</td><td data-label="Checkouts" class="num">{{row['checkouts']}}</td><td data-label="Taken out" class="num">{{row['taken']|qty}} {{row['unit']}}</td><td data-label="Last">{{row['last_out'][:10]}}</td></tr>
+        {% else %}
+        <tr><td colspan="5"><div class="empty">Nothing was checked out in this period.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+
+  <div>
+    <div class="section-head"><h2>Least used</h2></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Component</th><th>Location</th><th class="num">On hand</th><th>Last checkout</th></tr></thead>
+      <tbody>
+        {% for row in report.least %}
+        <tr><td data-label="Component">{{item_link(row)}}</td><td data-label="Location">{{row['code']}}</td><td data-label="On hand" class="num">{{row['quantity']|qty}} {{row['unit']}}</td><td data-label="Last checkout">{{'Never' if not report.last_out.get(row['id']) else report.last_out[row['id']][:10]}}</td></tr>
+        {% else %}
+        <tr><td colspan="4"><div class="empty">Every item with stock was checked out in this period.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+
+  <div>
+    <div class="section-head"><h2>Used together</h2></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Components</th><th>Locations</th><th class="num">Jobs</th></tr></thead>
+      <tbody>
+        {% for a, b, jobs in report.together %}
+        <tr><td data-label="Components">{{item_link(a)}} + {{item_link(b)}}</td><td data-label="Locations">{{a['code']}} · {{b['code']}}</td><td data-label="Jobs" class="num">{{jobs}}</td></tr>
+        {% else %}
+        <tr><td colspan="3"><div class="empty">No pair has been used together three times yet.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+
+  <div>
+    <div class="section-head"><h2>Unaccounted for</h2></div>
+    <p class="muted">Stocktakes found less than expected. Parts may be leaving without a checkout.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Component</th><th>Location</th><th class="num">Counts short</th><th class="num">Missing</th></tr></thead>
+      <tbody>
+        {% for row in report.short %}
+        <tr><td data-label="Component">{{item_link(row)}}</td><td data-label="Location">{{row['code']}}</td><td data-label="Counts short" class="num">{{row['counts']}}</td><td data-label="Missing" class="num">{{row['missing']|qty}} {{row['unit']}}</td></tr>
+        {% else %}
+        <tr><td colspan="4"><div class="empty">No stocktake came up short in this period.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+</section>
+{% endblock %}
