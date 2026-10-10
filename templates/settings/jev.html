@@ -1,0 +1,11 @@
+<div class="card">
+  <h2>Classification with Jev</h2>
+  <p class="copy">When you add a part, Tally can ask TypeSafe's Jev model which family it is and which of your storage locations suits it. Get a key from <a href="https://console.typesafe.ai/keys" target="_blank" rel="noopener">console.typesafe.ai</a>. The part's name, manufacturer, part number and your location names are sent to TypeSafe when you press Suggest.</p>
+  <form method="post" action="{{url_for('update_jev')}}" class="password-form">
+    <label>API key<input name="api_key" type="password" autocomplete="off" placeholder="{{'Saved. Leave blank to keep it' if jev['api_key'] else ''}}"></label>
+    {% if jev['api_key'] %}<label class="check"><input name="clear_api_key" type="checkbox"> Remove the saved API key</label>{% endif %}
+    <label class="check"><input name="enabled" type="checkbox"{% if jev['enabled'] %} checked{% endif %}> Offer suggestions when adding a part</label>
+    {% if jev['enabled'] and not jev['api_key'] %}<p class="copy">Add an API key before suggestions appear.</p>{% endif %}
+    <button class="button primary">Save</button>
+  </form>
+</div>

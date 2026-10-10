@@ -28,6 +28,7 @@ from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.barcode.qr import QrCodeWidget
 from app.webhooks import init_outbox, enqueue_event, start_worker
 from app import providers as part_providers
+from app import jev
 from app.matching import parse_value, suggested_homes, value_ranked
 from app.bag_labels import parse_bag_label
 from app.bom import TEXT_FIELDS, package_of, parse_bom, prepare_items, match_line
@@ -744,7 +745,7 @@ def new_item():
                 image_path = image_upload("image") if enabled("images") else ""
             except ValueError as exc:
                 flash(str(exc), "error")
-                return render_template("item_form.html", item=None, locations=locations, selected_location=suggested_location, suggested_name=initial["name"], suggested_manufacturer=initial.get("manufacturer", ""), suggested_part_number=initial.get("part_number", ""), suggested_attributes=initial.get("attributes", {}), families=FAMILIES, family_homes=layout_setting("family_homes"), selected_family=selected_family, scanned=scanned)
+                return render_template("item_form.html", item=None, locations=locations, selected_location=suggested_location, suggested_name=initial["name"], suggested_manufacturer=initial.get("manufacturer", ""), suggested_part_number=initial.get("part_number", ""), suggested_attributes=initial.get("attributes", {}), families=FAMILIES, family_homes=layout_setting("family_homes"), selected_family=selected_family, scanned=scanned, jev_ready=jev_ready())
             cur = conn.execute("INSERT INTO items(name, manufacturer, part_number, quantity, unit, minimum_quantity, location_id, notes, image_path, updated_at, family, attributes, supplier, supplier_sku, catalogue_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (name, manufacturer, part_number, quantity, request.form.get("unit", "pcs").strip() or "pcs", minimum, location_id, request.form.get("notes", "").strip(), image_path, now, selected_family, json.dumps(attributes, ensure_ascii=False), scanned["supplier"], scanned["supplier_sku"], suggestion["id"] if suggestion else None))
             if quantity: conn.execute("INSERT INTO movements(item_id, quantity_change, reason, occurred_at) VALUES (?, ?, ?, ?)", (cur.lastrowid, quantity, "Initial stock", now))
             dispatch_webhooks("item.created", item_payload(cur.lastrowid))
@@ -765,7 +766,7 @@ def new_item():
             },
         }
         suggested_location = request.form.get("location_id", "")
-    return render_template("item_form.html", item=None, locations=locations, selected_location=suggested_location, suggested_name=initial["name"], suggested_manufacturer=initial.get("manufacturer", ""), suggested_part_number=initial.get("part_number", ""), suggested_attributes=initial.get("attributes", {}), families=FAMILIES, family_homes=layout_setting("family_homes"), selected_family=selected_family, scanned=scanned)
+    return render_template("item_form.html", item=None, locations=locations, selected_location=suggested_location, suggested_name=initial["name"], suggested_manufacturer=initial.get("manufacturer", ""), suggested_part_number=initial.get("part_number", ""), suggested_attributes=initial.get("attributes", {}), families=FAMILIES, family_homes=layout_setting("family_homes"), selected_family=selected_family, scanned=scanned, jev_ready=jev_ready())
 
 @app.route("/items/<int:item_id>", methods=["GET", "POST"])
 def item_detail(item_id):
@@ -1745,7 +1746,7 @@ def export_rows(rows, columns, filename, format, title):
     pdf.save(); output.seek(0)
     return send_file(output, mimetype="application/pdf", as_attachment=True, download_name=f"{filename}.pdf")
 
-SETTINGS_SECTIONS = {"general": "General", "labels": "Labels", "catalogue": "Catalogue", "providers": "Part search", "webhooks": "Webhooks", "security": "Access and backups"}
+SETTINGS_SECTIONS = {"general": "General", "labels": "Labels", "catalogue": "Catalogue", "providers": "Part search", "jev": "Classification", "webhooks": "Webhooks", "security": "Access and backups"}
 
 @app.route("/settings")
 @app.route("/settings/<section>")
@@ -1765,6 +1766,8 @@ def settings(section="general"):
         source = db().execute("SELECT value FROM settings WHERE key='catalogue.url'").fetchone()
         entries = catalogue_entries()
         context.update(catalogue_count=len(entries), catalogue_entries=entries, catalogue_url=source["value"] if source else "")
+    elif section == "jev":
+        context["jev"] = jev_settings()
     elif section == "providers":
         context.update(providers=part_providers.PROVIDERS, provider_configs=provider_configs(), is_configured=part_providers.is_configured)
     elif section == "security":
@@ -1824,6 +1827,45 @@ def update_provider(provider_id):
         dispatch_webhooks("settings.updated", {"section": "providers", "provider": provider_id})
     flash(f"{provider['name']} settings saved.", "success")
     return redirect(url_for("settings", section="providers"))
+
+def jev_settings():
+    stored = {row["key"]: row["value"] for row in db().execute("SELECT key, value FROM settings WHERE key LIKE 'jev.%'")}
+    return {"api_key": stored.get("jev.api_key", ""), "enabled": stored.get("jev.enabled") == "1"}
+
+def jev_ready():
+    config = jev_settings()
+    return config["enabled"] and bool(config["api_key"])
+
+@app.route("/settings/jev", methods=["POST"])
+def update_jev():
+    key = request.form.get("api_key", "").strip()[:200]
+    with db() as conn:
+        set_setting("jev.enabled", "1" if request.form.get("enabled") else "0")
+        if key: set_setting("jev.api_key", key)
+        elif request.form.get("clear_api_key"): set_setting("jev.api_key", "")
+        dispatch_webhooks("settings.updated", {"section": "jev"})
+    flash("Classification settings saved.", "success")
+    return redirect(url_for("settings", section="jev"))
+
+@app.route("/api/classify", methods=["POST"])
+def classify_part():
+    """Suggest a family and a storage location for the part described in the form."""
+    if not jev_ready(): return jsonify(error="Add a Jev API key in Settings first."), 400
+    form = request.get_json(silent=True) or {}
+    part = "\n".join(f"{label}: {str(form.get(key, '')).strip()[:300]}" for key, label in (("name", "Name"), ("manufacturer", "Manufacturer"), ("part_number", "Part number")) if str(form.get(key, "")).strip())
+    if not part: return jsonify(error="Enter a name first."), 400
+    rows = db().execute("SELECT id, code, label, kind, keywords FROM locations ORDER BY code").fetchall()
+    # Skip containers: a location other locations sit inside is not somewhere parts go.
+    homes = [row for row in rows if not any(parent_code(other["code"]) == row["code"] for other in rows)]
+    if not homes: return jsonify(error="Add a storage location first."), 400
+    try:
+        result = jev.classify(jev_settings()["api_key"], part, {key: family["label"] for key, family in FAMILIES.items()},
+                              [(row["code"], " · ".join(filter(None, (row["label"], row["kind"], row["keywords"])))) for row in homes])
+    except jev.JevError as exc:
+        return jsonify(error=str(exc)), 502
+    code, location_confidence = result["location"]
+    home = next((row for row in homes if row["code"] == code), None)
+    return jsonify(family=result["family"][0], family_confidence=result["family"][1], location_id=home["id"] if home else None, location=code, location_confidence=location_confidence)
 
 @app.route("/settings/webhooks", methods=["POST"])
 def add_webhook():
