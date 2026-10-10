@@ -11,7 +11,7 @@ These are the specs behind Tally's researched features, and all of them have shi
 | [Attachments on items](attachments.md) | 22/30 (shipped) | Attach datasheets, pinout photos and links to items, and share them through a catalogue entry. | Nothing new |
 | [Stocktake: count a storage location](stocktake.md) | 21/30 (shipped) | Count a drawer on your phone. Each difference becomes a stock movement, and the dashboard shows what is due. | Nothing new |
 | [Parametric search on component attributes](parametric-search.md) | 21/30 (shipped) | Search by value and package, such as `10k 0603`, and filter Components by attribute chips. | Nothing new |
-| [Usage reports and drawer layout](usage-reports.md) | Proposed | Report most and least used items and suggest moving busy and co-used items closer to the bench. | Nothing new |
+| [Usage reports and drawer layout](usage-reports.md) | Proposed | Report most and least used items and suggest moving busy and co-accessed items closer to the bench. | Nothing new |
 
 Every spec can ship on its own. Where two specs touch the same code, both say so, and whichever ships first adds the shared piece. The shared pieces are `exports_enabled`, `drawer_order(row)`, `item_column_names()`, the supplier SKU columns and the value parser.
 
