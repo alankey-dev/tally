@@ -57,6 +57,13 @@ When an item, or every item in a storage location, was last physically counted.
 **Stock movement**:
 A dated increase or decrease to an item’s on-hand quantity.
 
+**Checkout**:
+An outgoing stock movement that counts as using a part: stock out, a project build or a loss. A return does not cancel it.
+_Avoid_: Use (as a noun for the event)
+
+**Job**:
+One stock action or one project, whose items are used together.
+
 **Designator**:
 A board reference such as R12 in a CAD BOM. Tally groups designators into one line and does not store them.
 _Avoid_: Reference

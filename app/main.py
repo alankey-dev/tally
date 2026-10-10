@@ -151,6 +151,15 @@ def init_db():
         if "last_counted_at" not in location_column_names():
             conn.execute("ALTER TABLE locations ADD COLUMN last_counted_at TEXT")
         conn.commit()
+    def movement_columns():
+        return {row["name"] for row in conn.execute("PRAGMA table_info(movements)")}
+    if "batch" not in movement_columns():
+        # Take the write lock and check again, so a second worker does not add the column twice.
+        conn.execute("BEGIN IMMEDIATE")
+        if "batch" not in movement_columns():
+            conn.execute("ALTER TABLE movements ADD COLUMN batch TEXT")
+        conn.commit()
+    conn.execute("CREATE INDEX IF NOT EXISTS movements_item_time ON movements(item_id, occurred_at)")
     def project_columns():
         return {row["name"] for row in conn.execute("PRAGMA table_info(project_items)")}
     if "per_build" not in project_columns():
@@ -407,10 +416,10 @@ def commit_read_events(response):
     return response
 
 
-def record_movement(conn, item, change, reason, event, project=None):
+def record_movement(conn, item, change, reason, event, project=None, batch=None):
     now = datetime.now(timezone.utc).isoformat()
     conn.execute("UPDATE items SET quantity=quantity+?, updated_at=? WHERE id=?", (change, now, item["id"]))
-    conn.execute("INSERT INTO movements(item_id,quantity_change,reason,occurred_at) VALUES (?,?,?,?)", (item["id"], change, reason, now))
+    conn.execute("INSERT INTO movements(item_id,quantity_change,reason,occurred_at,batch) VALUES (?,?,?,?,?)", (item["id"], change, reason, now, batch))
     dispatch_webhooks(event, {"item": {"id": item["id"], "name": item["name"], "part_number": item["part_number"], "location": item["code"]}, "quantity_change": change, "unit": item["unit"], "reason": reason, "project": project})
 
 def low_stock(conn):
@@ -557,9 +566,10 @@ def stock_checkout():
     except (KeyError, ValueError, TypeError):
         flash("Check the quantities. Stock out and lost actions cannot take more than is on hand.", "error")
         return back_to_stock()
+    batch = secrets.token_hex(8)
     with conn:
         for item, quantity in prepared:
-            record_movement(conn, item, direction * quantity, labels[action][0], labels[action][1])
+            record_movement(conn, item, direction * quantity, labels[action][0], labels[action][1], batch=batch)
     flash(f"{labels[action][0]} for {len(prepared)} component{'s' if len(prepared) != 1 else ''}.", "success")
     return back_to_stock()
 
@@ -1393,8 +1403,9 @@ def build_project(project_id):
         plan = project_plan(conn, project_id, wanted)
         short = [line for line in plan if line["short"] > 0]
         if plan and not short:
+            batch = secrets.token_hex(8)
             for line in plan:
-                record_movement(conn, line, -line["need"], f"Built {project['title']} ×{wanted}", "stock.out", reference)
+                record_movement(conn, line, -line["need"], f"Built {project['title']} ×{wanted}", "stock.out", reference, batch)
                 conn.execute("UPDATE project_items SET quantity=quantity+? WHERE project_id=? AND item_id=?", (line["need"], project_id, line["id"]))
             build_id = conn.execute("INSERT INTO builds(project_id, quantity, lines, built_at) VALUES (?, ?, ?, ?)", (project_id, wanted, json.dumps([[line["id"], line["need"]] for line in plan]), datetime.now(timezone.utc).isoformat())).lastrowid
             dispatch_webhooks("project.built", {"project": reference, "build_id": build_id, "quantity": wanted, "lines": [{"item": {"id": line["id"], "name": line["name"], "part_number": line["part_number"], "location": line["code"]}, "quantity_change": -line["need"], "unit": line["unit"]} for line in plan]})
@@ -1422,11 +1433,12 @@ def undo_build(project_id, build_id):
         undone = conn.execute("UPDATE builds SET undone_at=? WHERE id=? AND undone_at IS NULL", (datetime.now(timezone.utc).isoformat(), build_id)).rowcount
         if undone:
             reason = f"Unbuilt {build['title']} ×{build['quantity']}"
+            batch = secrets.token_hex(8)
             for item_id, quantity in lines:
                 item = conn.execute("SELECT i.*, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE i.id=?", (item_id,)).fetchone()
                 if item is None:
                     continue
-                record_movement(conn, item, quantity, reason, "stock.returned", {"id": project_id, "title": build["title"]})
+                record_movement(conn, item, quantity, reason, "stock.returned", {"id": project_id, "title": build["title"]}, batch)
                 conn.execute("UPDATE project_items SET quantity=max(quantity-?, 0) WHERE project_id=? AND item_id=?", (quantity, project_id, item_id))
         if undone:
             dispatch_webhooks("project.build_undone", {"project": {"id": project_id, "title": build["title"]}, "build_id": build_id, "quantity": build["quantity"], "lines": [{"item_id": item_id, "quantity_change": quantity} for item_id, quantity in lines]})
@@ -1589,6 +1601,63 @@ def export_orders(format):
 @app.route("/reports")
 def reports():
     return render_template("reports.html")
+
+# Outgoing movements that count as using a part. Returns, receipts, stocktake corrections and manual adjustments do not.
+CHECKOUT_REASONS = ("Stock used", "Marked lost or damaged")
+CHECKOUT_SQL = "m.quantity_change < 0 AND (m.reason IN (?, ?) OR m.reason LIKE 'Built %')"
+USAGE_PERIODS = {"30": 30, "90": 90, "365": 365, "all": None}
+MIN_PAIR_JOBS = 3
+
+def usage_report(conn, period, group):
+    """Most and least used items, the pairs used together, and stocktake shortfalls for a period and storage group."""
+    days = USAGE_PERIODS[period]
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat() if days else ""
+    in_group = "AND l.code LIKE ? || ' %'" if group else ""
+    extra = [group] if group else []
+    base = f"FROM movements m JOIN items i ON i.id=m.item_id JOIN locations l ON l.id=i.location_id WHERE m.occurred_at >= ? {in_group}"
+    most = conn.execute(f"""SELECT i.id, i.name, i.unit, l.code, count(*) AS checkouts, -sum(m.quantity_change) AS taken, max(m.occurred_at) AS last_out
+        {base} AND {CHECKOUT_SQL} GROUP BY i.id ORDER BY checkouts DESC, taken DESC, i.name LIMIT 20""", (since, *extra, *CHECKOUT_REASONS)).fetchall()
+    last_out = {row["item_id"]: row["last_out"] for row in conn.execute(f"SELECT m.item_id, max(m.occurred_at) AS last_out FROM movements m WHERE {CHECKOUT_SQL} GROUP BY m.item_id", CHECKOUT_REASONS)}
+    idle = conn.execute(f"""SELECT i.id, i.name, i.unit, i.quantity, l.code FROM items i JOIN locations l ON l.id=i.location_id
+        WHERE i.quantity > 0 {in_group} AND NOT EXISTS (SELECT 1 FROM movements m WHERE m.item_id=i.id AND m.occurred_at >= ? AND {CHECKOUT_SQL})""", (*extra, since, *CHECKOUT_REASONS)).fetchall()
+    least = sorted(idle, key=lambda row: (last_out.get(row["id"]) or "", row["name"].casefold()))[:20]
+    # A job is one stock action or one project. A project counts once however often it was built.
+    pairs = {}
+    for a, b, jobs in conn.execute("""SELECT a.item_id, b.item_id, count(DISTINCT a.batch) FROM movements a JOIN movements b ON b.batch=a.batch AND a.item_id < b.item_id
+        WHERE a.occurred_at >= ? AND a.reason IN (?, ?) AND b.reason IN (?, ?) AND a.quantity_change < 0 AND b.quantity_change < 0 GROUP BY a.item_id, b.item_id""", (since, *CHECKOUT_REASONS, *CHECKOUT_REASONS)):
+        pairs[(a, b)] = jobs
+    for a, b, projects in conn.execute("SELECT a.item_id, b.item_id, count(*) FROM project_items a JOIN project_items b ON b.project_id=a.project_id AND a.item_id < b.item_id GROUP BY a.item_id, b.item_id"):
+        pairs[(a, b)] = pairs.get((a, b), 0) + projects
+    names = {row["id"]: row for row in conn.execute(f"SELECT i.id, i.name, l.code FROM items i JOIN locations l ON l.id=i.location_id WHERE 1=1 {in_group}", extra)}
+    together = sorted(((names[a], names[b], jobs) for (a, b), jobs in pairs.items() if jobs >= MIN_PAIR_JOBS and a in names and b in names),
+                      key=lambda pair: (-pair[2], pair[0]["name"].casefold(), pair[1]["name"].casefold()))[:20]
+    short = conn.execute(f"""SELECT i.id, i.name, i.unit, l.code, count(*) AS counts, -sum(m.quantity_change) AS missing
+        {base} AND m.reason='Stocktake' AND m.quantity_change < 0 GROUP BY i.id ORDER BY missing DESC, i.name LIMIT 20""", (since, *extra)).fetchall()
+    removed = conn.execute(f"SELECT coalesce(-sum(m.quantity_change), 0) {base} AND m.quantity_change < 0 AND (m.reason='Stocktake' OR m.reason IN (?, ?) OR m.reason LIKE 'Built %')", (since, *extra, *CHECKOUT_REASONS)).fetchone()[0]
+    recorded = conn.execute(f"SELECT coalesce(-sum(m.quantity_change), 0) {base} AND {CHECKOUT_SQL}", (since, *extra, *CHECKOUT_REASONS)).fetchone()[0]
+    return {"most": most, "least": least, "last_out": last_out, "together": together, "short": short, "coverage": round(100 * recorded / removed) if removed else None}
+
+def usage_filters():
+    period = request.args.get("days", "90")
+    return (period if period in USAGE_PERIODS else "90"), request.args.get("group", "").strip()
+
+@app.route("/reports/usage")
+def usage():
+    period, group = usage_filters()
+    conn = db()
+    groups = sorted({row["code"].split()[0] for row in conn.execute("SELECT code FROM locations")})
+    return render_template("usage.html", report=usage_report(conn, period, group), period=period, group=group, groups=groups)
+
+@app.route("/reports/usage.csv")
+def export_usage():
+    if not enabled("exports"): abort(404)
+    period, group = usage_filters()
+    report = usage_report(db(), period, group)
+    rows = [("Most used", row["name"], row["code"], row["checkouts"], row["taken"], row["last_out"][:10]) for row in report["most"]]
+    rows += [("Least used", row["name"], row["code"], 0, 0, "") for row in report["least"]]
+    rows += [("Unaccounted for", row["name"], row["code"], row["counts"], row["missing"], "") for row in report["short"]]
+    rows += [("Used together", f"{a['name']} + {b['name']}", f"{a['code']} + {b['code']}", jobs, "", "") for a, b, jobs in report["together"]]
+    return export_rows(rows, ["Report", "Component", "Location", "Count", "Quantity", "Last checkout"], "tally-usage", "csv", "Usage")
 
 @app.route("/reports/inventory.<format>")
 def export_inventory(format):

@@ -4,7 +4,7 @@ Once this ships, a **Usage** page shows which items you check out most and which
 
 | Status | Research score | Depends on |
 | --- | --- | --- |
-| Proposed | Not scored | Nothing new |
+| Shipped | Not scored | Nothing new |
 
 ## Why
 
@@ -17,9 +17,9 @@ Once this ships, a **Usage** page shows which items you check out most and which
 1. **Usage** opens from the main navigation. A period selector offers 30 days, 90 days, 1 year and All time. The default is 90 days.
 2. **Most used** lists the top 20 items by number of checkouts in the period, with the quantity taken out, the last checkout and the current drawer.
 3. **Least used** lists items with stock on hand and no checkout in the period, oldest last checkout first. Items never checked out show "Never".
-4. Both lists can be grouped by component family or by storage group, and exported as CSV when exports are enabled.
+4. Every list can be limited to one storage group, and the page exports as CSV when exports are enabled.
 5. A **checkout** is any outgoing movement: stock out, a project build or a loss. Returns do not cancel it, so a perfboard taken out 30 times and returned 30 times counts 30. Receipts, returns, order receipts, stocktake corrections and initial stock are not checkouts.
-6. **Used together** lists the pairs of items that most often leave in the same job, with the number of jobs. A job is one checkout action or one build. Items that share a project's bill of materials also count as used together, even if the project has not been built.
+6. **Used together** lists the pairs of items that most often leave in the same job, with the number of jobs. A job is one stock action. Items that share a project's bill of materials also count as used together, even if the project has not been built. A project counts once, however often it was built.
 7. **Unaccounted for** lists items whose stocktakes found less than expected in the period, with the total shortfall. It is not part of the ranking. A drawer that is often short suggests parts are leaving without a recorded checkout.
 8. A coverage line under the page title says how much of the period's stock reduction came from recorded checkouts, for example "82% of stock taken out was recorded". The rest shows up as stocktake shortfalls.
 
@@ -65,8 +65,8 @@ Unaccounted for: sum negative `Stocktake` movements per item in the period.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/usage` | New. Renders the page for `?days=` and `?group=`. |
-| GET | `/usage.csv` | New. Same data as CSV, behind `exports_enabled`. |
+| GET | `/reports/usage` | New, `usage`. Renders the page for `?days=` (30, 90, 365 or all) and `?group=`, a storage group such as `C1`. |
+| GET | `/reports/usage.csv` | New. Same data as CSV, behind `exports_enabled`. |
 
 ### Webhooks
 
@@ -96,7 +96,7 @@ None. The page only reads.
 - `CONTEXT.md`: define **Checkout** and **Job**.
 - `docs/specs/README.md`: this spec's row.
 
-## Open questions
+## Decisions
 
-1. Is 3 jobs the right minimum before a pair counts as used together?
-2. Should the default period be 90 days or a year, given that workshop use is bursty?
+- A pair counts as used together after 3 jobs (`MIN_PAIR_JOBS`).
+- The default period is 90 days. Both are constants and easy to change after trying the report on real data.

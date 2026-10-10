@@ -20,6 +20,7 @@ Tally is a self-hosted inventory for an electronics workshop. One container, one
 - **Attachments.** Attach a datasheet PDF, a pinout photo or a link to any item, and open it with one tap. Share one with every item made from the same quick add catalogue entry. Components marked with a file icon have attachments.
 - **Stocktake.** Walk a storage location or a whole group on your phone, tick what matches, type what doesn't. Differences become stock movements, and the dashboard shows what is due a count.
 - **Projects.** Keep each build's bill of materials, see how many you can build from stock and which lines fall short, then build ×N to take every part in one go. Undo if you change your mind. Import a KiCad, EasyEDA or JLCPCB BOM CSV and match it to your items. Export the BOM as CSV or PDF.
+- **Usage report.** See which parts you check out most and least, which are used together, and which stocktakes came up short, over 30 days, 90 days, a year or all time. Find it under Reports.
 - **Webhooks.** Send app events to external services, or locate an item with a drawer LED controller. Subscribe to individual events or all events. See [webhook events and payloads](docs/webhooks.md).
 - **Live display.** Open the dashboard on a spare tablet; it refreshes when anything changes.
 - **Light and dark**, system fonts, keyboard friendly, WCAG AA colours.
