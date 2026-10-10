@@ -96,7 +96,7 @@ None. The page only reads.
 - `CONTEXT.md`: define **Checkout** and **Job**.
 - `docs/specs/README.md`: this spec's row.
 
-## Open questions
+## Decisions
 
-1. Is 3 jobs the right minimum before a pair counts as used together?
-2. Should the default period be 90 days or a year, given that workshop use is bursty?
+- A pair counts as used together after 3 jobs (`MIN_PAIR_JOBS`).
+- The default period is 90 days. Both are constants and easy to change after trying the report on real data.
