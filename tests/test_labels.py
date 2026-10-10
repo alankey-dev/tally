@@ -146,3 +146,34 @@ class LocationManageTests(LabelTests):
         self.assertEqual(len(self.query("SELECT id FROM locations WHERE id=?", used)), 1)
         self.client.post(f"/locations/{empty}/delete")
         self.assertEqual(self.query("SELECT id FROM locations WHERE id=?", empty), [])
+
+    def test_nested_codes_from_form(self):
+        post = lambda **data: self.client.post("/locations/new", data=data)
+        post(series="X", label="Cabinet", sizes="S=Small drawer")
+        post(series="X", label="Cabinet two")
+        post(parent="X1", series="S", label="Resistors")
+        post(parent="X1", series="S", label="Caps")
+        post(parent="X1 S02", label="Slot")
+        post(parent="X1 S02", label="Slot two")
+        codes = [row[0] for row in self.query("SELECT code FROM locations WHERE code LIKE 'X%' ORDER BY code")]
+        for expected in ("X1", "X2", "X1 S01", "X1 S02", "X1 S02.01", "X1 S02.02"):
+            self.assertIn(expected, codes)
+        self.assertEqual(self.query("SELECT kind FROM locations WHERE code='X1 S01'"), [("Small drawer",)])
+        used = self.location("X1 S02")
+        self.client.post(f"/locations/{used}/delete")
+        self.assertEqual(len(self.query("SELECT id FROM locations WHERE id=?", used)), 1)
+
+
+class LocationCodeTests(unittest.TestCase):
+    def test_next_code(self):
+        codes = ["C1 S01", "C2 S01", "C3", "C4", "4L 01"]
+        self.assertEqual(main.next_code(codes, series="C"), "C5")
+        self.assertEqual(main.next_code(codes, series="4L"), "4L1")
+        self.assertEqual(main.next_code(codes, "C4", "S"), "C4 S01")
+        self.assertEqual(main.next_code(codes + ["C4 S01", "C4 S09"], "C4", "S"), "C4 S10")
+        self.assertEqual(main.next_code(codes, "C4"), "C4 01")
+        self.assertEqual(main.next_code(["C4 01"], "C4 01"), "C4 01.01")
+        self.assertEqual(main.parent_code("C4 01.01"), "C4 01")
+        self.assertEqual(main.parent_code("C4 S01"), "C4")
+        self.assertEqual(main.parent_code("C4"), "")
+

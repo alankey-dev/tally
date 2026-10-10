@@ -48,6 +48,7 @@
         <label>Permanent code<input required name="code" value="{{location['code']}}"></label>
         <label>Description<input required name="label" value="{{location['label']}}"></label>
         <label>Type<input name="kind" value="{{location['kind']}}"></label>
+        <label>Sizes inside <span class="optional">optional</span><input name="sizes" value="{{location['series']}}" placeholder="S=Small drawer, M=Medium drawer"></label>
         <label>Notes<textarea name="notes" rows="2">{{location['notes']}}</textarea></label>
         <label>Replace image <span class="optional">optional</span><input name="image" type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"></label>
         <div class="form-actions"><button class="button primary">Save changes</button></div>
@@ -78,9 +79,16 @@
 <dialog id="add-location">
   <form method="post" action="{{url_for('new_location')}}" enctype="multipart/form-data" class="form">
     <h2>Add storage</h2>
-    <label>Permanent code<input required name="code" placeholder="e.g. A01 or SHELF 2"></label>
-    <small class="hint">Codes that share a first word form a group: C4 S01 and C4 S02 both appear under C4.</small>
+    <label>Inside <span class="optional">optional</span>
+      <select name="parent"><option value="">Nothing: a new top-level container</option>
+        {% for row in all_locations %}<option value="{{row['code']}}">{{row['code']}} · {{row['label']}}</option>{% endfor %}
+      </select></label>
+    <label>Series <span class="optional">optional</span><input name="series" list="series-options" maxlength="8" placeholder="C, 4L, S, M…"></label>
+    <datalist id="series-options">{% for letter, name in series_options.items() %}<option value="{{letter}}">{{name}}</option>{% endfor %}</datalist>
+    <small class="hint">The code is numbered for you. Top level with series C gives the next C (C5). Inside C4 with series S gives C4 S01; with no series, C4 01. Inside C4 01 gives C4 01.01. Or type your own code below.</small>
+    <label>Custom code <span class="optional">optional</span><input name="code" placeholder="e.g. A01 or SHELF 2"></label>
     <label>Description<input required name="label" placeholder="What normally lives here"></label>
+    <label>Sizes inside <span class="optional">optional</span><input name="sizes" placeholder="S=Small drawer, M=Medium drawer"></label>
     <label>Storage image or SVG <span class="optional">optional</span><input name="image" type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"></label>
     <details>
       <summary>More details</summary>

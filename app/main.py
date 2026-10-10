@@ -138,6 +138,8 @@ def init_db():
         conn.execute("ALTER TABLE locations ADD COLUMN image_path TEXT DEFAULT ''")
     if "keywords" not in location_columns:
         conn.execute("ALTER TABLE locations ADD COLUMN keywords TEXT NOT NULL DEFAULT ''")
+    if "series" not in location_columns:
+        conn.execute("ALTER TABLE locations ADD COLUMN series TEXT NOT NULL DEFAULT ''")
     def location_column_names():
         return {row["name"] for row in conn.execute("PRAGMA table_info(locations)")}
     if "last_counted_at" not in item_column_names() or "last_counted_at" not in location_column_names():
@@ -844,7 +846,9 @@ def locations():
     selected = select_locations(active, query)
     address = label_base_url() or request.host_url
     count_first = next((row for row in selected if row['item_count']), None) if active and not query else None
-    return render_template("locations.html", locations=selected, count_first=count_first, groups=groups, active=active, query=query, presets=LABEL_PRESETS, default_preset=default_preset(), label_address=address, label_warning=label_address_warning(address))
+    series_options = {}
+    for row in rows: series_options.update(parse_series(row["series"]))
+    return render_template("locations.html", all_locations=rows, series_options=series_options, locations=selected, count_first=count_first, groups=groups, active=active, query=query, presets=LABEL_PRESETS, default_preset=default_preset(), label_address=address, label_warning=label_address_warning(address))
 
 @app.route("/l/<path:code>")
 def scan_location(code):
@@ -859,18 +863,56 @@ def scan_location(code):
         return redirect(url_for("locations", q=code))
     return redirect(url_for("stock", location=row["id"]))
 
+def parent_code(code):
+    """The container a code sits in, read from the code itself: C4 S01.02 is in C4 S01, which is in C4."""
+    if "." in code: return code.rsplit(".", 1)[0]
+    return code.split(" ")[0] if " " in code else ""
+
+def has_children(conn, code):
+    return any(parent_code(row["code"]) == code for row in conn.execute("SELECT code FROM locations"))
+
+def parse_series(text):
+    """'S=Small drawer, M=Medium drawer' -> {'S': 'Small drawer', 'M': 'Medium drawer'}."""
+    pairs = (part.partition("=") for part in text.split(","))
+    return {key.strip().upper(): name.strip() for key, _, name in pairs if re.fullmatch(r"[A-Za-z0-9]+", key.strip())}
+
+def next_code(codes, parent="", series=""):
+    """The next free code. Top level: prefix C gives C5. Inside C4: series S gives C4 S01, none gives C4 01. Inside C4 01: C4 01.01."""
+    codes = set(codes)
+    if parent:
+        stem = parent + "." if " " in parent or "." in parent else f"{parent} {series}"
+        width = 2
+    else:
+        stem, width = series, 1
+        codes |= {code.split(" ")[0] for code in codes}
+    taken = [int(m.group(1)) for code in codes if (m := re.fullmatch(re.escape(stem) + r"(\d+)", code))]
+    return f"{stem}{max(taken, default=0) + 1:0{width}d}"
+
 @app.route("/locations/new", methods=["POST"])
 def new_location():
+    conn = db()
     code, label = request.form.get("code", "").strip().upper(), request.form.get("label", "").strip()
-    if not code or not label: flash("Location code and label are required.", "error")
+    parent, series = request.form.get("parent", "").strip().upper(), request.form.get("series", "").strip().upper()
+    if not label: flash("A description is required.", "error")
+    elif series and not re.fullmatch(r"[A-Z0-9]+", series): flash("A series is letters or digits, like C or S.", "error")
+    elif not code and not parent and not series: flash("Give a code, a series like C to number from, or choose where it sits.", "error")
+    elif parent and not conn.execute("SELECT 1 FROM locations WHERE code=?", (parent,)).fetchone(): flash("That container no longer exists.", "error")
     else:
+        sizes = parse_series(conn.execute("SELECT series FROM locations WHERE code=?", (parent,)).fetchone()["series"]) if parent else {}
+        image_path = ""
         try:
             image_path = image_upload("image") if enabled("images") else ""
-            location_id = db().execute("INSERT INTO locations(code, kind, label, notes, image_path, created_at) VALUES (?, ?, ?, ?, ?, ?)", (code, request.form.get("kind", "custom storage"), label, request.form.get("notes", ""), image_path, datetime.now(timezone.utc).isoformat())).lastrowid
-            dispatch_webhooks("location.created", {"location": dict(db().execute("SELECT * FROM locations WHERE id=?", (location_id,)).fetchone())})
-            db().commit()
-            flash("Storage location added.", "success")
-        except sqlite3.IntegrityError: flash("That location code already exists.", "error")
+            conn.execute("BEGIN IMMEDIATE")
+            code = code or next_code([row["code"] for row in conn.execute("SELECT code FROM locations")], parent, series)
+            kind = request.form.get("kind", "").strip() or sizes.get(series) or "custom storage"
+            location_id = conn.execute("INSERT INTO locations(code, kind, label, notes, image_path, series, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (code, kind, label, request.form.get("notes", ""), image_path, request.form.get("sizes", ""), datetime.now(timezone.utc).isoformat())).lastrowid
+            dispatch_webhooks("location.created", {"location": dict(conn.execute("SELECT * FROM locations WHERE id=?", (location_id,)).fetchone())})
+            conn.commit()
+            flash(f"Storage location {code} added.", "success")
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            if image_path: (UPLOAD_DIR / image_path).unlink(missing_ok=True)
+            flash("That location code already exists.", "error")
         except ValueError as exc: flash(str(exc), "error")
     return redirect(url_for("locations"))
 
@@ -883,10 +925,13 @@ def edit_location(location_id):
     if not code or not label:
         flash("Location code and label are required.", "error")
         return redirect(url_for("locations", q=row["code"]))
+    if code != row["code"] and has_children(conn, row["code"]):
+        flash(f"{row['code']} has locations inside it, so its code can't change.", "error")
+        return redirect(url_for("locations", q=row["code"]))
     new_image = ""
     try:
         new_image = image_upload("image") if enabled("images") else ""
-        conn.execute("UPDATE locations SET code=?, label=?, kind=?, notes=?, image_path=? WHERE id=?", (code, label, request.form.get("kind", row["kind"]).strip() or row["kind"], request.form.get("notes", ""), new_image or row["image_path"], location_id))
+        conn.execute("UPDATE locations SET code=?, label=?, kind=?, notes=?, series=?, image_path=? WHERE id=?", (code, label, request.form.get("kind", row["kind"]).strip() or row["kind"], request.form.get("notes", ""), request.form.get("sizes", ""), new_image or row["image_path"], location_id))
         conn.commit()
     except sqlite3.IntegrityError:
         conn.rollback()
@@ -907,6 +952,9 @@ def delete_location(location_id):
     if not row: abort(404)
     if conn.execute("SELECT 1 FROM items WHERE location_id=?", (location_id,)).fetchone():
         flash(f"{row['code']} still holds components. Move them elsewhere before deleting it.", "error")
+        return redirect(url_for("locations", q=row["code"]))
+    if has_children(conn, row["code"]):
+        flash(f"{row['code']} has locations inside it. Delete or move those first.", "error")
         return redirect(url_for("locations", q=row["code"]))
     conn.execute("DELETE FROM locations WHERE id=?", (location_id,))
     conn.commit()
