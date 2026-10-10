@@ -23,6 +23,12 @@
       <label>Manufacturer <span class="optional">optional</span><input name="manufacturer" id="item-manufacturer" value="{{request.form.get('manufacturer', suggested_manufacturer)}}" placeholder="e.g. Seeed Studio"></label>
       <label>Part number <span class="optional">optional</span><input name="part_number" id="item-part-number" value="{{request.form.get('part_number', suggested_part_number)}}" placeholder="e.g. NE555P"></label>
     </div>
+    {% if jev_ready %}
+    <div class="jev-suggest">
+      <button type="button" class="button small" id="jev-suggest">{{ icon('zap', 'small') }}Suggest family and location</button>
+      <small id="jev-status" class="hint" role="status" aria-live="polite"></small>
+    </div>
+    {% endif %}
     <input type="hidden" name="supplier" value="{{scanned['supplier']}}">
     <input type="hidden" name="supplier_sku" value="{{scanned['supplier_sku']}}">
     <div id="family-fields">

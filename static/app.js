@@ -1,4 +1,31 @@
 (() => {
+  const jevButton = document.querySelector('#jev-suggest');
+  if (jevButton) {
+    const status = document.querySelector('#jev-status');
+    jevButton.addEventListener('click', async () => {
+      const value = id => (document.querySelector(id) || {}).value || '';
+      status.textContent = 'Asking Jev…';
+      jevButton.disabled = true;
+      try {
+        const response = await fetch('/api/classify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: value('#item-name'), manufacturer: value('#item-manufacturer'), part_number: value('#item-part-number')})});
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Jev could not suggest anything.');
+        const family = document.querySelector('#item-family');
+        family.value = result.family;
+        family.dispatchEvent(new Event('change', {bubbles: true}));
+        const filter = document.querySelector('#location-filter');
+        if (filter && filter.value) { filter.value = ''; filter.dispatchEvent(new Event('input', {bubbles: true})); }
+        const location = document.querySelector('#location-select');
+        if (result.location_id) location.value = String(result.location_id);
+        const percent = number => Math.round(number * 100) + '%';
+        status.textContent = `Suggested ${family.selectedOptions[0].textContent} (${percent(result.family_confidence)} sure) in ${result.location} (${percent(result.location_confidence)} sure). Check before saving.`;
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        jevButton.disabled = false;
+      }
+    });
+  }
   const guidedForm = document.querySelector('#guided-item-form');
   const familySelect = document.querySelector('#item-family');
   const itemName = document.querySelector('#item-name');
