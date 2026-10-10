@@ -874,6 +874,46 @@ def new_location():
         except ValueError as exc: flash(str(exc), "error")
     return redirect(url_for("locations"))
 
+@app.route("/locations/<int:location_id>/edit", methods=["POST"])
+def edit_location(location_id):
+    conn = db()
+    row = conn.execute("SELECT * FROM locations WHERE id=?", (location_id,)).fetchone()
+    if not row: abort(404)
+    code, label = request.form.get("code", "").strip().upper(), request.form.get("label", "").strip()
+    if not code or not label:
+        flash("Location code and label are required.", "error")
+        return redirect(url_for("locations", q=row["code"]))
+    new_image = ""
+    try:
+        new_image = image_upload("image") if enabled("images") else ""
+        conn.execute("UPDATE locations SET code=?, label=?, kind=?, notes=?, image_path=? WHERE id=?", (code, label, request.form.get("kind", row["kind"]).strip() or row["kind"], request.form.get("notes", ""), new_image or row["image_path"], location_id))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        if new_image: (UPLOAD_DIR / new_image).unlink(missing_ok=True)
+        flash("That location code already exists.", "error")
+        return redirect(url_for("locations", q=row["code"]))
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("locations", q=row["code"]))
+    if new_image and row["image_path"]: (UPLOAD_DIR / row["image_path"]).unlink(missing_ok=True)
+    flash("Storage location updated.", "success")
+    return redirect(url_for("locations", q=code))
+
+@app.route("/locations/<int:location_id>/delete", methods=["POST"])
+def delete_location(location_id):
+    conn = db()
+    row = conn.execute("SELECT * FROM locations WHERE id=?", (location_id,)).fetchone()
+    if not row: abort(404)
+    if conn.execute("SELECT 1 FROM items WHERE location_id=?", (location_id,)).fetchone():
+        flash(f"{row['code']} still holds components. Move them elsewhere before deleting it.", "error")
+        return redirect(url_for("locations", q=row["code"]))
+    conn.execute("DELETE FROM locations WHERE id=?", (location_id,))
+    conn.commit()
+    if row["image_path"]: (UPLOAD_DIR / row["image_path"]).unlink(missing_ok=True)
+    flash(f"Storage location {row['code']} deleted.", "success")
+    return redirect(url_for("locations"))
+
 @app.route("/uploads/<path:filename>")
 def uploaded_image(filename):
     attachment = db().execute("SELECT label FROM attachments WHERE file_path=? LIMIT 1", (filename,)).fetchone()

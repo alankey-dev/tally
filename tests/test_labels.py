@@ -133,3 +133,16 @@ class LabelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LocationManageTests(LabelTests):
+    def test_edit_and_delete_location(self):
+        empty = self.add_location("ZZ1")
+        self.client.post(f"/locations/{empty}/edit", data=dict(code="zz2", label="Renamed", kind="box", notes="n"))
+        self.assertEqual(self.query("SELECT code, label FROM locations WHERE id=?", empty), [("ZZ2", "Renamed")])
+        used = self.add_location("ZZ3")
+        self.add_item("Part", used)
+        self.client.post(f"/locations/{used}/delete")
+        self.assertEqual(len(self.query("SELECT id FROM locations WHERE id=?", used)), 1)
+        self.client.post(f"/locations/{empty}/delete")
+        self.assertEqual(self.query("SELECT id FROM locations WHERE id=?", empty), [])
