@@ -1,6 +1,6 @@
-# Usage reports and drawer layout suggestions
+# Usage reports
 
-Once this ships, a **Usage** page shows which items you use most and which you never touch, over a period you choose. A second tab, **Rearrange**, suggests moving the busiest items into the drawers that are easiest to reach and the idle ones to the far end, and lists the moves as a checklist you tick off at the bench.
+Once this ships, a **Usage** page shows which items you check out most and which you never touch, over a period you choose. It also lists the items you use together, so you can see which parts belong near each other.
 
 | Status | Research score | Depends on |
 | --- | --- | --- |
@@ -8,100 +8,95 @@ Once this ships, a **Usage** page shows which items you use most and which you n
 
 ## Why
 
-- Every stock change already goes through `record_movement()`, so Tally holds the usage history and does not use it.
-- Permanent homes are only useful if the common parts are quick to reach. Cabinets grow by accident, so a resistor drawer ends up three cabinets from the bench.
-- Stocktake and low stock say what you have. Nothing says what you actually use.
+- Every checkout, build and loss already goes through `record_movement()`, so Tally holds the usage history and shows none of it.
+- A perfboard or breadboard can be the most used part in the workshop. Quantity and low stock do not show that.
+- Knowing what is used most, and what is used together, is the information needed to decide where drawers should live. Moving drawers is a separate decision and is not part of this spec.
 
 ## What it does
 
 1. **Usage** opens from the main navigation. A period selector offers 30 days, 90 days, 1 year and All time. The default is 90 days.
-2. **Most used** lists the top 20 items by quantity taken out in the period, with the number of times taken, the quantity, the last use and the current drawer.
-3. **Least used** lists items with stock on hand and no use in the period, oldest last use first. Items never used show "Never".
+2. **Most used** lists the top 20 items by number of checkouts in the period, with the quantity taken out, the last checkout and the current drawer.
+3. **Least used** lists items with stock on hand and no checkout in the period, oldest last checkout first. Items never checked out show "Never".
 4. Both lists can be grouped by component family or by storage group, and exported as CSV when exports are enabled.
-5. Usage counts outgoing movements only: stock out, builds and losses. Receipts, returns, stocktake corrections, order receipts and undone builds are ignored, so a stocktake does not make a part look busy.
-6. **Rearrange** ranks every item by use and proposes a new home for each item whose rank puts it in the wrong zone (see Design). Each proposal shows the item, the current drawer, the proposed drawer and the reason, for example "Used 14 times in 90 days, now in the 6th row of C3".
-7. Nothing moves until you accept it. **Apply** on a proposal moves the item and writes a note in its history. **Mark as done** is the same action, for when you have already moved the parts by hand.
-8. **Explain with AI** is optional and appears only when an API key is set (see Open questions). It asks a model to group items that are used together, such as the parts of one project, so that they land in neighbouring drawers. The model proposes groups. Tally still decides the drawers.
+5. A **checkout** is any outgoing movement: stock out, a project build or a loss. Returns do not cancel it, so a perfboard taken out 30 times and returned 30 times counts 30. Receipts, returns, order receipts, stocktake corrections and initial stock are not checkouts.
+6. **Used together** lists the pairs of items that most often leave in the same job, with the number of jobs. A job is one checkout action or one build. Items that share a project's bill of materials also count as used together, even if the project has not been built.
+7. **Unaccounted for** lists items whose stocktakes found less than expected in the period, with the total shortfall. It is not part of the ranking. A drawer that is often short suggests parts are leaving without a recorded checkout.
+8. A coverage line under the page title says how much of the period's stock reduction came from recorded checkouts, for example "82% of stock taken out was recorded". The rest shows up as stocktake shortfalls.
 
 ## Out of scope
 
-- Tracking how often an item is looked up or scanned. That needs a new event log and is a separate feature.
-- Moving physical drawers or renumbering codes. Only item homes change.
-- Automatic moves without confirmation.
+- Suggesting or applying drawer moves, and any distance-to-bench setting. This spec only reports. A later spec can propose moves if the report shows they would help.
+- Tracking item page views or label scans.
+- AI. Counting needs no model. Choosing a home for a new part stays with Jev in Quick add.
+- Tools that are borrowed and returned. That needs a different model (who has it, where it is now).
 - Forecasting demand.
 
 ## Design
 
 ### Data
 
-No schema change for the reports. Usage is a query over `movements`:
+Add one nullable column so a job can be grouped exactly:
 
 ```sql
-SELECT item_id, count(*) AS times, -sum(quantity_change) AS used, max(occurred_at) AS last_used
-FROM movements
-WHERE quantity_change < 0 AND occurred_at >= ? AND reason NOT LIKE 'Stocktake%'
-GROUP BY item_id
+ALTER TABLE movements ADD COLUMN batch TEXT;
 ```
 
-Build undo writes a positive movement, so it nets out of `used`. Add a `reason` allow-list constant next to the other movement reasons instead of matching strings inline, so a new reason cannot silently count as use.
+Follow the guarded migration used for the other `ALTER TABLE` columns, because `init_db()` runs before every request in both gunicorn workers and an unguarded second `ALTER TABLE` fails with "duplicate column name". Old rows keep `NULL` and are treated as a job of one.
 
-Rearrange needs to know which drawers are easy to reach. Add one setting, stored in `settings`:
+`record_movement()` gains an optional `batch` argument. The stock checkout action, a project build and an undo each generate one batch token (`secrets.token_hex(8)`) and pass it to every row they write. Other callers pass nothing.
 
-- `prime_locations`: an ordered list of location codes from best to worst, edited on a new Settings section. If unset, Tally falls back to `drawer_order(row)` within the group the cabinet is in, and treats the lowest codes as the best.
+A constant lists the reasons that count as checkouts, so a new reason cannot silently count as use. Checkout reasons are the ones the stock action writes for use and loss, plus `Built …`.
 
-### Placement
+### Queries
 
-Placement is deterministic and does not need a model:
+Most used:
 
-1. Rank items by `used` over the chosen period.
-2. Rank locations by prime order, skipping locations that hold items Tally should not move (a pin flag per item is a follow-up).
-3. Walk both lists, assigning each item to the first location with room in its zone. Locations are never over capacity: an item goes only to a location whose kind (small, medium, large) fits it, and capacity is one family per drawer unless the item's current drawer already mixes families.
-4. Emit a proposal only when the assigned location differs from the current one and the move is worth it, measured as a rank gap of at least 5 positions. This stops the list churning for marginal gains.
+```sql
+SELECT item_id, count(*) AS checkouts, -sum(quantity_change) AS taken, max(occurred_at) AS last_out
+FROM movements WHERE quantity_change < 0 AND occurred_at >= ? AND <checkout reason>
+GROUP BY item_id ORDER BY checkouts DESC LIMIT 20
+```
 
-Moves are swaps where a location is full, so a proposal set can always be applied in any order without losing track of the item.
+Used together: self-join `movements` on `batch` (and on `project_items.project_id` for bill-of-materials pairs), count distinct jobs per item pair, and keep pairs with at least 3 jobs.
 
-The AI step only reorders ties and groups: it receives item names, families and project membership (never quantities or prices), returns groups of item ids, and Tally uses those groups to keep neighbours together. The result is validated against the item ids Tally sent. Anything else in the reply is discarded.
+Unaccounted for: sum negative `Stocktake` movements per item in the period.
 
 ### Routes
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/usage` | New. Most and least used for `?days=`. |
+| GET | `/usage` | New. Renders the page for `?days=` and `?group=`. |
 | GET | `/usage.csv` | New. Same data as CSV, behind `exports_enabled`. |
-| GET | `/usage/rearrange` | New. Lists proposals. |
-| POST | `/usage/rearrange/<int:item_id>` | New. Applies one proposal, rechecking that the item is still where the page said. |
-| POST | `/usage/rearrange/ai` | New, only with an API key. Returns groups for the next proposal run. |
 
 ### Webhooks
 
-Applying a proposal emits the existing item-updated event. No new event.
+None. The page only reads.
 
 ## Edge cases
 
-- No movements in the period: both lists show a plain empty state and Rearrange says there is not enough data to suggest anything. Rearrange needs at least 20 outgoing movements in the period before it proposes moves.
-- Fresh install with imported stock: initial stock is not usage and is ignored.
-- Item deleted or moved since the page loaded: applying a stale proposal returns to the list with a message and changes nothing.
-- A target drawer filled between page load and apply: reject, do not overfill.
-- API key missing, offline or rate limited: the button is hidden or fails with a message, and the deterministic proposals still work.
+- No checkouts in the period: each list shows a plain empty state and the coverage line is hidden.
+- Movements written before the `batch` column exist group as one job each, so older history adds to frequency but not to used-together.
+- An undone build writes positive movements, which are not checkouts. The original build stays counted, because the checkout happened.
+- A deleted item drops out of every list.
+- Large histories: queries use indexes on `movements(item_id, occurred_at)`. Add that index with `CREATE INDEX IF NOT EXISTS`.
 
 ## Tests
 
-- Usage query ignores receipts, returns, stocktake and order receipts, and nets out undone builds.
-- Period selector bounds, default period, and the empty state.
-- Placement puts the most used item in the best location, keeps capacity, and skips moves under the rank gap.
-- Applying a proposal moves the item once, is safe to repeat and rejects a stale page.
-- AI grouping rejects ids it was not sent, and the feature is hidden without a key.
+- Only the listed reasons count as checkouts, and returns do not cancel them.
+- Most used and least used respect the period and the grouping.
+- One checkout action and one build each write a single `batch`, and items in it appear as used together.
+- Items sharing a project bill of materials appear as used together without a build.
+- A stocktake shortfall appears under Unaccounted for and not in the ranking.
+- The migration runs twice without error and leaves old rows with a `NULL` batch.
 - CSV export is gated by `exports_enabled`.
 
 ## Docs to update
 
 - `README.md`: add Usage reports to Features.
-- `CONTEXT.md`: define **Usage** (quantity taken out in a period) and **Proposed move**.
-- `docs/specs/README.md`: add this spec to the table.
+- `CONTEXT.md`: define **Checkout** and **Job**.
+- `docs/specs/README.md`: this spec's row.
 
 ## Open questions
 
-1. What does "closer together" mean physically: near the bench, or adjacent to each other? The spec assumes both. Hot items go in the best drawers, and project groups stay neighbours. Is the `prime_locations` list enough to describe your cabinets, or do you need a map of the cabinets?
-2. Should the AI step exist at all in v1? Ranking by use is a sort, which a model adds nothing to. The model earns its place only for grouping related parts. The first release can ship without it.
-3. Hosted API or local model for the optional AI step? Tally is self-hosted with no accounts, so an API key is a new kind of setting and sends item names off the machine.
-4. Should "use" include lookups? Today it covers only movements.
+1. Is 3 jobs the right minimum before a pair counts as used together?
+2. Should the default period be 90 days or a year, given that workshop use is bursty?
