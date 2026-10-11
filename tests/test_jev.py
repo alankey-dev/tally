@@ -61,3 +61,14 @@ class JevTests(unittest.TestCase):
         sent = urlopen.call_args.args[0]
         self.assertEqual(sent.get_header("Authorization"), "Bearer k")
         self.assertEqual(result, {"family": ("resistor", 0.7), "location": ("A", 0.6)})
+
+    def test_quick_add_offers_and_uses_jev(self):
+        self.assertNotIn("Ask Jev", self.client.get("/quick-add?fragment=1&q=zzqx widget").get_data(as_text=True))
+        self.enable()
+        offer = self.client.get("/quick-add?fragment=1&q=zzqx widget").get_data(as_text=True)
+        self.assertIn("Suggest family and home", offer)
+        with mock.patch.object(jev, "classify", return_value={"family": ("resistor", 0.9), "location": ("C1 S01", 0.8)}) as call:
+            answer = self.client.get("/quick-add?fragment=1&q=zzqx widget&jev=1").get_data(as_text=True)
+        self.assertIn("Use this suggestion", answer)
+        self.assertIn("family=resistor", answer)
+        self.assertIn("Name: zzqx widget", call.call_args.args[1])

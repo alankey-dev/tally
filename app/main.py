@@ -678,7 +678,14 @@ def quick_add():
                                         **{f"attr_{key}": value for key, value in entry["attributes"].items()})
     scan = scan_values()
     new_args = {**scan, **({"part_number": query} if scan.get("scan") else {"name": query})}
-    context = dict(query=query, scan=scan, new_args=new_args, matches=matches, homes=homes, catalogue=catalogue, selected=selected, token=str(uuid.uuid4()),
+    jev_result = jev_error = None
+    if jev_ready() and len(query) >= 2 and not matches:
+        if request.args.get("jev"):
+            try:
+                jev_result = jev_suggest(new_args)
+            except (ValueError, jev.JevError) as exc:
+                jev_error = str(exc)
+    context = dict(jev_available=jev_ready() and len(query) >= 2 and not matches, jev_result=jev_result, jev_error=jev_error, families=FAMILIES, query=query, scan=scan, new_args=new_args, matches=matches, homes=homes, catalogue=catalogue, selected=selected, token=str(uuid.uuid4()),
                    providers=part_providers.PROVIDERS, active_providers=active, provider_results=provider_results, provider_errors=provider_errors)
     return render_template("quick_results.html" if request.args.get("fragment") else "quick_add.html", **context)
 
@@ -1916,25 +1923,30 @@ def update_jev():
     flash("Classification settings saved.", "success")
     return redirect(url_for("settings", section="jev"))
 
+def jev_suggest(fields):
+    """Ask Jev for a family and a home for a part. Raises ValueError for a bad request and jev.JevError when Jev fails."""
+    part = "\n".join(f"{label}: {str(fields.get(key, '')).strip()[:300]}" for key, label in (("name", "Name"), ("manufacturer", "Manufacturer"), ("part_number", "Part number")) if str(fields.get(key, "")).strip())
+    if not part: raise ValueError("Enter a name first.")
+    rows = db().execute("SELECT id, code, label, kind, keywords FROM locations ORDER BY code").fetchall()
+    # Skip containers: a location other locations sit inside is not somewhere parts go.
+    homes = [row for row in rows if not any(parent_code(other["code"]) == row["code"] for other in rows)]
+    if not homes: raise ValueError("Add a storage location first.")
+    result = jev.classify(jev_settings()["api_key"], part, {key: family["label"] for key, family in FAMILIES.items()},
+                          [(row["code"], " · ".join(filter(None, (row["label"], row["kind"], row["keywords"])))) for row in homes])
+    code, location_confidence = result["location"]
+    home = next((row for row in homes if row["code"] == code), None)
+    return dict(family=result["family"][0], family_confidence=result["family"][1], location_id=home["id"] if home else None, location=code, location_confidence=location_confidence)
+
 @app.route("/api/classify", methods=["POST"])
 def classify_part():
     """Suggest a family and a storage location for the part described in the form."""
     if not jev_ready(): return jsonify(error="Add a Jev API key in Settings first."), 400
-    form = request.get_json(silent=True) or {}
-    part = "\n".join(f"{label}: {str(form.get(key, '')).strip()[:300]}" for key, label in (("name", "Name"), ("manufacturer", "Manufacturer"), ("part_number", "Part number")) if str(form.get(key, "")).strip())
-    if not part: return jsonify(error="Enter a name first."), 400
-    rows = db().execute("SELECT id, code, label, kind, keywords FROM locations ORDER BY code").fetchall()
-    # Skip containers: a location other locations sit inside is not somewhere parts go.
-    homes = [row for row in rows if not any(parent_code(other["code"]) == row["code"] for other in rows)]
-    if not homes: return jsonify(error="Add a storage location first."), 400
     try:
-        result = jev.classify(jev_settings()["api_key"], part, {key: family["label"] for key, family in FAMILIES.items()},
-                              [(row["code"], " · ".join(filter(None, (row["label"], row["kind"], row["keywords"])))) for row in homes])
+        return jsonify(jev_suggest(request.get_json(silent=True) or {}))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     except jev.JevError as exc:
         return jsonify(error=str(exc)), 502
-    code, location_confidence = result["location"]
-    home = next((row for row in homes if row["code"] == code), None)
-    return jsonify(family=result["family"][0], family_confidence=result["family"][1], location_id=home["id"] if home else None, location=code, location_confidence=location_confidence)
 
 @app.route("/settings/webhooks", methods=["POST"])
 def add_webhook():

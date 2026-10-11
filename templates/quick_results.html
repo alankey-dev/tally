@@ -59,6 +59,24 @@
   {% endif %}
 </section>
 {% endif %}
+{% if jev_available %}
+<section class="quick-section">
+  <h2>Ask Jev</h2>
+  {% if jev_result %}
+  <div class="quick-matches">
+    <a class="quick-match" href="{{url_for('new_item', family=jev_result['family'], location=jev_result['location_id'], **new_args)}}">
+      <strong>{{families[jev_result['family']]['label']}} in <code>{{jev_result['location']}}</code></strong>
+      <span>{{(jev_result['family_confidence'] * 100)|round|int}}% sure of the family, {{(jev_result['location_confidence'] * 100)|round|int}}% sure of the home. Check before saving.</span>
+      <span class="cta">Use this suggestion</span>
+    </a>
+  </div>
+  {% else %}
+  {% if jev_error %}<p class="empty">{{jev_error}}</p>{% endif %}
+  <p>Not sure what family it is or where it goes? Jev can suggest both.</p>
+  <a class="button" data-provider-search href="{{url_for('quick_add', q=query, jev=1, **scan)}}">Suggest family and home</a>
+  {% endif %}
+</section>
+{% endif %}
 <section class="quick-section">
   <h2>New variant?</h2>
   {% if homes %}
