@@ -79,14 +79,16 @@
 <dialog id="add-location">
   <form method="post" action="{{url_for('new_location')}}" enctype="multipart/form-data" class="form">
     <h2>Add storage</h2>
-    <label>Inside <span class="optional">optional</span>
-      <select name="parent"><option value="">Nothing: a new top-level container</option>
-        {% for row in all_locations %}<option value="{{row['code']}}">{{row['code']}} · {{row['label']}}</option>{% endfor %}
+    <label>Group
+      <select name="parent" id="loc-group">
+        {% for key, group in groups.items() %}<option value="{{key}}"{% if key == active %} selected{% endif %}>{{key}} · {{group['name']}}</option>{% endfor %}
+        <option value="">A new group…</option>
       </select></label>
-    <label>Series <span class="optional">optional</span><input name="series" list="series-options" maxlength="8" placeholder="C, 4L, S, M…"></label>
-    <datalist id="series-options">{% for letter, name in series_options.items() %}<option value="{{letter}}">{{name}}</option>{% endfor %}</datalist>
-    <small class="hint">The code is numbered for you. Top level with series C gives the next C (C5). Inside C4 with series S gives C4 S01; with no series, C4 01. Inside C4 01 gives C4 01.01. Or type your own code below.</small>
-    <label>Custom code <span class="optional">optional</span><input name="code" placeholder="e.g. A01 or SHELF 2"></label>
+    <label id="loc-new-group" hidden>New group code<input name="newgroup" maxlength="8" placeholder="e.g. C4 or 5L"></label>
+    <label>Size <span class="optional">optional</span><input id="loc-size" name="series" list="series-options" maxlength="8" placeholder="S, M, L, or blank for plain numbers"></label>
+    <datalist id="series-options"></datalist>
+    <p class="copy">Code: <code id="loc-preview">pick a group</code></p>
+    <label>Custom code <span class="optional">optional, replaces the code above</span><input name="code" placeholder="e.g. A01 or SHELF 2"></label>
     <label>Description<input required name="label" placeholder="What normally lives here"></label>
     <label>Sizes inside <span class="optional">optional</span><input name="sizes" placeholder="S=Small drawer, M=Medium drawer"></label>
     <label>Storage image or SVG <span class="optional">optional</span><input name="image" type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"></label>
@@ -121,4 +123,29 @@
   </form>
 </dialog>
 {% endif %}
+<script>
+(function () {
+  var codes = {{ all_locations|map(attribute='code')|list|tojson }};
+  var form = document.querySelector('#add-location form');
+  var group = form.querySelector('#loc-group'), size = form.querySelector('#loc-size'), preview = form.querySelector('#loc-preview');
+  var fresh = form.querySelector('#loc-new-group'), freshInput = fresh.querySelector('input'), list = form.querySelector('#series-options');
+  function sizesIn(g) {
+    var found = {};
+    codes.forEach(function (c) { var m = c.indexOf(g + ' ') === 0 && c.slice(g.length + 1).match(/^([A-Z]+)\d+$/); if (m) found[m[1]] = 1; });
+    return Object.keys(found);
+  }
+  function update() {
+    var isNew = group.value === '';
+    fresh.hidden = !isNew;
+    var g = isNew ? freshInput.value.trim().toUpperCase() : group.value, s = size.value.trim().toUpperCase();
+    list.innerHTML = sizesIn(g).map(function (x) { return '<option value="' + x + '">'; }).join('');
+    if (!g) { preview.textContent = 'type a group code'; return; }
+    var stem = g + ' ' + s, top = 0;
+    codes.forEach(function (c) { if (c.indexOf(stem) === 0 && /^\d+$/.test(c.slice(stem.length))) top = Math.max(top, parseInt(c.slice(stem.length), 10)); });
+    preview.textContent = stem + String(top + 1).padStart(2, '0');
+  }
+  [group, size, freshInput].forEach(function (el) { el.addEventListener('input', update); });
+  update();
+})();
+</script>
 {% endblock %}

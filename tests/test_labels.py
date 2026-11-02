@@ -163,6 +163,18 @@ class LocationManageTests(LabelTests):
         self.client.post(f"/locations/{used}/delete")
         self.assertEqual(len(self.query("SELECT id FROM locations WHERE id=?", used)), 1)
 
+    def test_add_to_existing_group(self):
+        post = lambda **data: self.client.post("/locations/new", data=data)
+        post(code="Y1 S01", kind="small drawer", label="Seed")
+        self.add_location("5L 01")
+        post(parent="Y1", series="S", label="More")
+        post(parent="5L", label="Box two")
+        post(newgroup="6l", label="New box")
+        codes = [row[0] for row in self.query("SELECT code FROM locations")]
+        for expected in ("Y1 S02", "5L 02", "6L 01"):
+            self.assertIn(expected, codes)
+        self.assertEqual(self.query("SELECT kind FROM locations WHERE code='Y1 S02'"), [("small drawer",)])
+
 
 class LocationCodeTests(unittest.TestCase):
     def test_next_code(self):
