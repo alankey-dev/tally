@@ -169,10 +169,11 @@ class LocationManageTests(LabelTests):
         self.add_location("5L 01")
         post(parent="Y1", series="S", label="More")
         post(parent="5L", label="Box two")
-        post(newgroup="6l", label="New box")
+        post(newgroup="6l", groupname="Sixes", label="New box")
         codes = [row[0] for row in self.query("SELECT code FROM locations")]
         for expected in ("Y1 S02", "5L 02", "6L 01"):
             self.assertIn(expected, codes)
+        self.assertIn("Sixes", self.query("SELECT value FROM settings WHERE key='layout.groups'")[0][0])
         self.assertEqual(self.query("SELECT kind FROM locations WHERE code='Y1 S02'"), [("small drawer",)])
 
 

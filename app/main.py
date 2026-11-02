@@ -936,6 +936,11 @@ def new_location():
             kind = request.form.get("kind", "").strip() or sizes.get(series) or sibling_kind(conn, code) or "custom storage"
             location_id = conn.execute("INSERT INTO locations(code, kind, label, notes, image_path, series, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (code, kind, label, request.form.get("notes", ""), image_path, request.form.get("sizes", ""), datetime.now(timezone.utc).isoformat())).lastrowid
             dispatch_webhooks("location.created", {"location": dict(conn.execute("SELECT * FROM locations WHERE id=?", (location_id,)).fetchone())})
+            groupname = request.form.get("groupname", "").strip()
+            if newgroup and groupname:
+                names = layout_setting("groups")
+                names.setdefault(code.split()[0], groupname)
+                conn.execute("INSERT INTO settings(key, value) VALUES ('layout.groups', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(names),))
             conn.commit()
             flash(f"Storage location {code} added.", "success")
         except sqlite3.IntegrityError:
