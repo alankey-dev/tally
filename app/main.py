@@ -906,23 +906,34 @@ def next_code(codes, parent="", series=""):
     taken = [int(m.group(1)) for code in codes if (m := re.fullmatch(re.escape(stem) + r"(\d+)", code))]
     return f"{stem}{max(taken, default=0) + 1:0{width}d}"
 
+def sibling_kind(conn, code):
+    """The kind of the nearest existing neighbour: C1 S45 is a small drawer because C1 S44 is."""
+    stem = re.sub(r"\d+$", "", code)
+    row = conn.execute("SELECT kind FROM locations WHERE code LIKE ? ESCAPE '\\' AND code != ? ORDER BY code DESC LIMIT 1", (stem.replace("%", "\\%").replace("_", "\\_") + "%", code)).fetchone()
+    return row["kind"] if row else ""
+
 @app.route("/locations/new", methods=["POST"])
 def new_location():
     conn = db()
     code, label = request.form.get("code", "").strip().upper(), request.form.get("label", "").strip()
     parent, series = request.form.get("parent", "").strip().upper(), request.form.get("series", "").strip().upper()
+    newgroup = request.form.get("newgroup", "").strip().upper()
+    if newgroup and not parent:
+        if not re.fullmatch(r"[A-Z0-9]+", newgroup): flash("A group code is letters or digits, like C4 or 5L.", "error"); return redirect(url_for("locations"))
+        parent = newgroup
     if not label: flash("A description is required.", "error")
     elif series and not re.fullmatch(r"[A-Z0-9]+", series): flash("A series is letters or digits, like C or S.", "error")
     elif not code and not parent and not series: flash("Give a code, a series like C to number from, or choose where it sits.", "error")
-    elif parent and not conn.execute("SELECT 1 FROM locations WHERE code=?", (parent,)).fetchone(): flash("That container no longer exists.", "error")
+    elif parent and not newgroup and not any(row["code"] == parent or row["code"].split()[0] == parent for row in conn.execute("SELECT code FROM locations")): flash("That group no longer exists.", "error")
     else:
-        sizes = parse_series(conn.execute("SELECT series FROM locations WHERE code=?", (parent,)).fetchone()["series"]) if parent else {}
+        container = conn.execute("SELECT series FROM locations WHERE code=?", (parent,)).fetchone() if parent else None
+        sizes = parse_series(container["series"]) if container else {}
         image_path = ""
         try:
             image_path = image_upload("image") if enabled("images") else ""
             conn.execute("BEGIN IMMEDIATE")
             code = code or next_code([row["code"] for row in conn.execute("SELECT code FROM locations")], parent, series)
-            kind = request.form.get("kind", "").strip() or sizes.get(series) or "custom storage"
+            kind = request.form.get("kind", "").strip() or sizes.get(series) or sibling_kind(conn, code) or "custom storage"
             location_id = conn.execute("INSERT INTO locations(code, kind, label, notes, image_path, series, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (code, kind, label, request.form.get("notes", ""), image_path, request.form.get("sizes", ""), datetime.now(timezone.utc).isoformat())).lastrowid
             dispatch_webhooks("location.created", {"location": dict(conn.execute("SELECT * FROM locations WHERE id=?", (location_id,)).fetchone())})
             conn.commit()
