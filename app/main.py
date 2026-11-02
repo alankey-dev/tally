@@ -868,6 +868,19 @@ def locations():
     for row in rows: series_options.update(parse_series(row["series"]))
     return render_template("locations.html", all_locations=rows, series_options=series_options, locations=selected, count_first=count_first, groups=groups, active=active, query=query, presets=LABEL_PRESETS, default_preset=default_preset(), label_address=address, label_warning=label_address_warning(address))
 
+@app.route("/locations/group/<key>/rename", methods=["POST"])
+def rename_group(key):
+    conn = db()
+    if not any(row["code"].split()[0] == key for row in conn.execute("SELECT code FROM locations")): abort(404)
+    names = layout_setting("groups")
+    name = request.form.get("name", "").strip()
+    if name: names[key] = name
+    else: names.pop(key, None)
+    conn.execute("INSERT INTO settings(key, value) VALUES ('layout.groups', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(names),))
+    conn.commit()
+    flash(f"Group {key} renamed." if name else f"Group {key} name cleared.", "success")
+    return redirect(url_for("locations", group=key))
+
 @app.route("/l/<path:code>")
 def scan_location(code):
     """The address in a drawer's QR code: open that drawer's stock, forgiving of letter case."""

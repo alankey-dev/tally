@@ -26,6 +26,15 @@
   <h2>{{'Search results' if query else groups.get(active, {}).get('name', active)}}</h2>
   <small>{{locations|length}} {{'location' if locations|length == 1 else 'locations'}}</small>
 </div>
+{% if active and not query %}
+<details class="drawer-edit">
+  <summary class="button small">{{ icon('sliders', 'small') }}Rename group</summary>
+  <form method="post" action="{{url_for('rename_group', key=active)}}" class="form">
+    <label>Name for {{active}}<input name="name" value="{{groups.get(active, {}).get('name', '') if groups.get(active, {}).get('name') != active else ''}}" placeholder="e.g. Hardware"></label>
+    <div class="form-actions"><button class="button primary">Save name</button></div>
+  </form>
+</details>
+{% endif %}
 {% if active and not query and count_first %}<p><a class="button" href="{{url_for('count_location', location_id=count_first['id'], walk=1)}}">{{ icon('check') }}Count this group</a></p>{% endif %}
 <div class="drawer-list">
   {% for location in locations %}
