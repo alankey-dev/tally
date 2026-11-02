@@ -6,15 +6,17 @@
 
 Tally is a self-hosted inventory for an electronics workshop. One container, one SQLite file, no accounts, works on a phone at the bench. Releases are published as `ghcr.io/alankey-dev/tally` images.
 
-[MIT licensed](LICENSE).
+Source, releases and issues are at <https://github.com/alankey-dev/tally>. [MIT licensed](LICENSE).
 
 ## Features
 
-- **Quick add.** Type what arrived, pick the matching variant, enter a count. Fuzzy matching forgives typos and spacing. Known parts come prefilled from a catalogue you can import from a file or URL in Settings.
+- **Quick add.** Type what arrived, pick the matching variant, enter a count. Fuzzy matching forgives typos and spacing. Known parts come prefilled from a catalogue of common hobby electronics parts, which you can extend or replace from a file or URL in Settings.
 - **Scan to receive.** Scan the 2D code on a Digi-Key, Mouser, Farnell, LCSC or TME bag into Quick add. Tally reads the part number, quantity and supplier SKU, opens the receive form, and you press Enter. Unknown parts open New component prefilled. With no scanner, tap **Scan a bag label** and take a photo; this works over plain HTTP, with no HTTPS needed.
+- **Part search.** When a part is not in your catalogue, Quick add can look it up on JLCPCB / LCSC (no account needed) or Mouser (needs a free API key) and prefill New component. Switch providers on under **Settings → Part search**.
+- **Suggestions with Jev.** Add a [TypeSafe](https://console.typesafe.ai/keys) API key under **Settings → Classification** and Tally can suggest a part's family and drawer in Quick add and New component. The part's name, manufacturer, part number and your location names are sent to TypeSafe when you ask. It is off until you add a key.
 - **Labels.** Print QR labels for drawers and parts; scan one with any phone camera to open that drawer's stock.
 - **Stock checkout.** Build a list, then record use, receipt, return, or loss in one action.
-- **Permanent homes.** Every part has a coded drawer or box. Search by name, part number, value, package or location code, such as `10k 0603` or `100nF 50V`. On Components, filter by component family and by attribute chips such as package, and set a value range for resistors and capacitors.
+- **Permanent homes.** Every part has a coded drawer or box. Add storage by choosing a group and a size and watching the next free code appear, then edit or delete it later, or export every location as CSV. Search by name, part number, value, package or location code, such as `10k 0603` or `100nF 50V`. On Components, filter by component family and by attribute chips such as package, and set a value range for resistors and capacitors.
 - **Low stock.** Set a minimum and the dashboard flags it, and the Order list suggests what to buy.
 - **Order list.** Turn low stock and project shortages into order entries, export them as CSV or Mouser part-list text, mark them ordered with a supplier and expected date, then tap Received to put the stock in.
 - **Attachments.** Attach a datasheet PDF, a pinout photo or a link to any item, and open it with one tap. Share one with every item made from the same quick add catalogue entry. Components marked with a file icon have attachments.
@@ -33,7 +35,7 @@ Use a USB or Bluetooth scanner in keyboard mode, and turn on GS (Ctrl+]) in its 
 
 ```sh
 mkdir tally && cd tally
-curl -fsSLO https://raw.githubusercontent.com/alankey-dev/tally-oss/main/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/alankey-dev/tally/main/docker-compose.yml
 docker compose up -d
 ```
 
@@ -49,7 +51,7 @@ The image runs on `amd64` and `arm64`, so a Raspberry Pi works too.
 
 ## First steps
 
-1. **Add your storage.** Under **Storage**, add each drawer, shelf or box with a short permanent code such as `CAB1 S01`. Codes are grouped by their first word.
+1. **Add your storage.** Under **Storage**, choose **Add storage**, pick a group (or start a new one) and a size, and describe what lives there. Tally numbers the next free code for you, such as `CAB1 S01`, and shows it before you save. You can type your own code instead. Codes are grouped by their first word.
 2. **Print labels for your storage.** Under **Storage**, choose **Print labels**, print the PDF at actual size and stick one on each drawer.
 3. **Add parts.** Use **Quick add** at the bench: type what arrived, pick the variant, enter a count.
 4. **Lock it.** Under **Settings**, set an access password and require sign-in before anyone else can reach Tally.
