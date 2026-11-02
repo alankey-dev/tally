@@ -88,28 +88,31 @@
 <dialog id="add-location">
   <form method="post" action="{{url_for('new_location')}}" enctype="multipart/form-data" class="form" id="add-location-form">
     <h2>Add storage</h2>
-    <label>Which group does it belong to?
+    <label>Group
       <select name="parent" id="loc-group">
         {% for key, group in groups.items() %}<option value="{{key}}"{% if key == active %} selected{% endif %}>{{key}} · {{group['name']}}</option>{% endfor %}
         <option value="">A new group…</option>
       </select></label>
-    <div id="loc-new-group" hidden class="form">
+    <div id="loc-new-group" class="subform" hidden>
       <label>New group code<input name="newgroup" maxlength="8" autocapitalize="characters" autocomplete="off"></label>
-      <small class="hint">Short and permanent, like C4 or 5L. It starts every code in the group.</small>
+      <small class="hint">Short and permanent, like C4 or 5L</small>
       <label>Group name <span class="optional">optional</span><input name="groupname" placeholder="e.g. Hardware"></label>
     </div>
-    <label>Size
-      <select id="loc-size-pick"></select></label>
-    <label id="loc-size-new" hidden>Size letter<input id="loc-size-text" maxlength="8" autocapitalize="characters" autocomplete="off"></label>
-    <input type="hidden" name="series" id="loc-size">
-    <small class="hint" id="loc-size-hint"></small>
-    <label>What normally lives here?<input required name="label" placeholder="e.g. 0603 resistors"></label>
+    <fieldset class="choice-set">
+      <legend>Size</legend>
+      <div id="loc-size-options"></div>
+      <label id="loc-size-new" hidden>Size letter<input id="loc-size-text" maxlength="8" autocapitalize="characters" autocomplete="off"></label>
+      <input type="hidden" name="series" id="loc-size">
+      <small class="hint" id="loc-size-hint"></small>
+    </fieldset>
+    <label>Description<input required name="label" placeholder="e.g. 0603 resistors"></label>
+    <small class="hint">What normally lives here</small>
     <div class="code-result">
       <span>Saved as</span><code id="loc-preview">choose a group</code>
     </div>
     <details>
       <summary>More options</summary>
-      <label>Use my own code instead <span class="optional">optional</span><input name="code" placeholder="e.g. A01 or SHELF 2" autocapitalize="characters"></label>
+      <label>Your own code <span class="optional">optional</span><input name="code" id="loc-custom" placeholder="e.g. A01 or SHELF 2" autocapitalize="characters"></label>
       <label>Type <span class="optional">optional</span><input name="kind" placeholder="Copied from the neighbouring drawer"></label>
       <label>Sizes this holds <span class="optional">optional</span><input name="sizes" placeholder="S=Small drawer, M=Medium drawer"></label>
       <label>Storage image or SVG <span class="optional">optional</span><input name="image" type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"></label>
@@ -143,47 +146,56 @@
 {% endif %}
 <script>
 (function () {
-  var rows = {{ all_locations|map(attribute='code')|list|tojson }}.map(function (c, i) { return {code: c, kind: {{ all_locations|map(attribute='kind')|list|tojson }}[i]}; });
-  var form = document.getElementById('add-location-form');
+  var kinds = {{ all_locations|map(attribute='kind')|list|tojson }};
+  var rows = {{ all_locations|map(attribute='code')|list|tojson }}.map(function (c, i) { return {code: c, kind: kinds[i]}; });
   var $ = function (id) { return document.getElementById(id); };
-  var group = $('loc-group'), pick = $('loc-size-pick'), text = $('loc-size-text'), newSize = $('loc-size-new'), hidden = $('loc-size'), hint = $('loc-size-hint');
-  var fresh = $('loc-new-group'), freshInput = fresh.querySelector('input[name=newgroup]'), preview = $('loc-preview');
-  var lastGroup = null;
+  var group = $('loc-group'), box = $('loc-size-options'), text = $('loc-size-text'), newSize = $('loc-size-new'), hidden = $('loc-size'), hint = $('loc-size-hint');
+  var fresh = $('loc-new-group'), freshInput = fresh.querySelector('input[name=newgroup]'), preview = $('loc-preview'), custom = $('loc-custom');
+  var lastGroup = null, choice = '';
   function inGroup(g) { return rows.filter(function (r) { return r.code.indexOf(g + ' ') === 0; }); }
   function sizesIn(g) {
-    var found = {}, count = {}, ordered = {};
+    var found = {}, count = {}, ordered = [];
     inGroup(g).forEach(function (r) {
       var m = r.code.slice(g.length + 1).match(/^([A-Z]+)\d+$/);
       if (m) { count[m[1]] = (count[m[1]] || 0) + 1; if (!found[m[1]]) found[m[1]] = r.kind; }
     });
-    Object.keys(found).sort(function (a, b) { return count[b] - count[a] || (a < b ? -1 : 1); }).forEach(function (k) { ordered[k] = found[k]; });
+    Object.keys(found).sort(function (a, b) { return count[b] - count[a] || (a < b ? -1 : 1); }).forEach(function (k) { ordered.push([k, k + ' · ' + found[k]]); });
     return ordered;
   }
+  function esc(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
   function fill(g) {
-    var found = sizesIn(g), plain = inGroup(g).some(function (r) { return /^\d+$/.test(r.code.slice(g.length + 1)); });
-    var html = '';
-    Object.keys(found).forEach(function (k) { html += '<option value="' + k + '">' + k + ' · ' + found[k] + '</option>'; });
-    var none = '<option value="">No size, just numbers</option>';
-    html = plain || !Object.keys(found).length ? none + html : html + none;
-    pick.innerHTML = html + '<option value="__new">A new size…</option>';
+    var opts = sizesIn(g), plain = inGroup(g).some(function (r) { return /^\d+$/.test(r.code.slice(g.length + 1)); });
+    var none = ['', 'No size, just numbers'];
+    opts = plain || !opts.length ? [none].concat(opts) : opts;
+    opts.push(['__new', 'A new size…']);
+    choice = opts[0][0];
+    if (opts.length > 4) {
+      box.innerHTML = '<select id="loc-size-pick">' + opts.map(function (o) { return '<option value="' + o[0] + '">' + esc(o[1]) + '</option>'; }).join('') + '</select>';
+      box.firstChild.addEventListener('input', function () { choice = this.value; update(); });
+    } else {
+      box.innerHTML = opts.map(function (o, i) { return '<label class="check"><input type="radio" name="size_choice" value="' + o[0] + '"' + (i ? '' : ' checked') + '> ' + esc(o[1]) + '</label>'; }).join('');
+      box.querySelectorAll('input').forEach(function (r) { r.addEventListener('change', function () { choice = this.value; update(); }); });
+    }
   }
   function update() {
     var isNew = group.value === '';
     fresh.hidden = !isNew;
     var g = isNew ? freshInput.value.trim().toUpperCase() : group.value;
     if (g !== lastGroup) { fill(g); lastGroup = g; }
-    var custom = pick.value === '__new';
-    newSize.hidden = !custom;
-    var s = (custom ? text.value : pick.value).trim().toUpperCase();
+    var other = choice === '__new';
+    newSize.hidden = !other;
+    var s = (other ? text.value : choice).trim().toUpperCase();
     hidden.value = s;
     var count = inGroup(g).length;
-    hint.textContent = !g ? '' : count ? g + ' has ' + count + ' ' + (count === 1 ? 'location' : 'locations') + ' already. The size is the letter in the code, like the S in ' + g + ' S01.' : 'A new group. Leave the size as plain numbers for ' + g + ' 01, ' + g + ' 02.';
+    hint.textContent = !g ? '' : count ? g + ' has ' + count + ' ' + (count === 1 ? 'location' : 'locations') + ', the size is the letter in the code, like S in ' + g + ' S01' : 'Plain numbers give ' + g + ' 01, ' + g + ' 02';
+    var own = custom.value.trim().toUpperCase();
+    if (own) { preview.textContent = own; return; }
     if (!g) { preview.textContent = 'choose a group'; return; }
     var stem = g + ' ' + s, top = 0;
     rows.forEach(function (r) { var c = r.code; if (c.indexOf(stem) === 0 && /^\d+$/.test(c.slice(stem.length))) top = Math.max(top, parseInt(c.slice(stem.length), 10)); });
     preview.textContent = stem + String(top + 1).padStart(2, '0');
   }
-  [group, pick, text, freshInput].forEach(function (el) { el.addEventListener('input', update); });
+  [group, text, freshInput, custom].forEach(function (el) { el.addEventListener('input', update); });
   update();
 })();
 </script>

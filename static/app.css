@@ -543,3 +543,8 @@ body.access-page .app-shell { display: block; }
 .code-result span { color: var(--text-2); font-size: .875rem; }
 .code-result code { font-size: 1.25rem; font-weight: 600; }
 #add-location details > summary { cursor: pointer; margin: 4px 0 10px; }
+.subform { padding-left: 14px; margin: 0 0 16px; border-left: 2px solid var(--border); }
+.choice-set { border: 0; padding: 0; margin: 0 0 16px; min-width: 0; }
+.choice-set legend { padding: 0; margin-bottom: 6px; font-weight: 500; }
+.choice-set .check { min-height: 44px; margin-bottom: 0; }
+.choice-set .hint { margin: 4px 0 0; }
