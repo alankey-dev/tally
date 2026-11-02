@@ -26,6 +26,15 @@
   <h2>{{'Search results' if query else groups.get(active, {}).get('name', active)}}</h2>
   <small>{{locations|length}} {{'location' if locations|length == 1 else 'locations'}}</small>
 </div>
+{% if active and not query %}
+<details class="drawer-edit">
+  <summary class="button small">{{ icon('sliders', 'small') }}Rename group</summary>
+  <form method="post" action="{{url_for('rename_group', key=active)}}" class="form">
+    <label>Name for {{active}}<input name="name" value="{{groups.get(active, {}).get('name', '') if groups.get(active, {}).get('name') != active else ''}}" placeholder="e.g. Hardware"></label>
+    <div class="form-actions"><button class="button primary">Save name</button></div>
+  </form>
+</details>
+{% endif %}
 {% if active and not query and count_first %}<p><a class="button" href="{{url_for('count_location', location_id=count_first['id'], walk=1)}}">{{ icon('check') }}Count this group</a></p>{% endif %}
 <div class="drawer-list">
   {% for location in locations %}
@@ -77,25 +86,37 @@
 {% endif %}
 
 <dialog id="add-location">
-  <form method="post" action="{{url_for('new_location')}}" enctype="multipart/form-data" class="form">
+  <form method="post" action="{{url_for('new_location')}}" enctype="multipart/form-data" class="form" id="add-location-form">
     <h2>Add storage</h2>
     <label>Group
       <select name="parent" id="loc-group">
         {% for key, group in groups.items() %}<option value="{{key}}"{% if key == active %} selected{% endif %}>{{key}} · {{group['name']}}</option>{% endfor %}
         <option value="">A new group…</option>
       </select></label>
-    <label id="loc-new-group" hidden>New group code<input name="newgroup" maxlength="8" placeholder="e.g. C4 or 5L"></label>
-    <label>Size <span class="optional">optional</span><input id="loc-size" name="series" list="series-options" maxlength="8" placeholder="S, M, L, or blank for plain numbers"></label>
-    <datalist id="series-options"></datalist>
-    <p class="copy">Code: <code id="loc-preview">pick a group</code></p>
-    <label>Custom code <span class="optional">optional, replaces the code above</span><input name="code" placeholder="e.g. A01 or SHELF 2"></label>
-    <label>Description<input required name="label" placeholder="What normally lives here"></label>
-    <label>Sizes inside <span class="optional">optional</span><input name="sizes" placeholder="S=Small drawer, M=Medium drawer"></label>
-    <label>Storage image or SVG <span class="optional">optional</span><input name="image" type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"></label>
+    <div id="loc-new-group" class="subform" hidden>
+      <label>New group code<input name="newgroup" maxlength="8" autocapitalize="characters" autocomplete="off"></label>
+      <small class="hint">Short and permanent, like C4 or 5L</small>
+      <label>Group name <span class="optional">optional</span><input name="groupname" placeholder="e.g. Hardware"></label>
+    </div>
+    <fieldset class="choice-set">
+      <legend>Size</legend>
+      <div id="loc-size-options"></div>
+      <label id="loc-size-new" hidden>Size letter<input id="loc-size-text" maxlength="8" autocapitalize="characters" autocomplete="off"></label>
+      <input type="hidden" name="series" id="loc-size">
+      <small class="hint" id="loc-size-hint"></small>
+    </fieldset>
+    <label>Description<input required name="label" placeholder="e.g. 0603 resistors"></label>
+    <small class="hint">What normally lives here</small>
+    <div class="code-result">
+      <span>Saved as</span><code id="loc-preview">choose a group</code>
+    </div>
     <details>
-      <summary>More details</summary>
-      <label>Type<input name="kind" value="custom storage"></label>
-      <label>Notes<textarea name="notes" rows="3"></textarea></label>
+      <summary>More options</summary>
+      <label>Your own code <span class="optional">optional</span><input name="code" id="loc-custom" placeholder="e.g. A01 or SHELF 2" autocapitalize="characters"></label>
+      <label>Type <span class="optional">optional</span><input name="kind" placeholder="Copied from the neighbouring drawer"></label>
+      <label>Sizes this holds <span class="optional">optional</span><input name="sizes" placeholder="S=Small drawer, M=Medium drawer"></label>
+      <label>Storage image or SVG <span class="optional">optional</span><input name="image" type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"></label>
+      <label>Notes <span class="optional">optional</span><textarea name="notes" rows="3"></textarea></label>
     </details>
     <div class="form-actions">
       <button class="button primary">Add storage</button>
@@ -125,26 +146,56 @@
 {% endif %}
 <script>
 (function () {
-  var codes = {{ all_locations|map(attribute='code')|list|tojson }};
-  var form = document.querySelector('#add-location form');
-  var group = form.querySelector('#loc-group'), size = form.querySelector('#loc-size'), preview = form.querySelector('#loc-preview');
-  var fresh = form.querySelector('#loc-new-group'), freshInput = fresh.querySelector('input'), list = form.querySelector('#series-options');
+  var kinds = {{ all_locations|map(attribute='kind')|list|tojson }};
+  var rows = {{ all_locations|map(attribute='code')|list|tojson }}.map(function (c, i) { return {code: c, kind: kinds[i]}; });
+  var $ = function (id) { return document.getElementById(id); };
+  var group = $('loc-group'), box = $('loc-size-options'), text = $('loc-size-text'), newSize = $('loc-size-new'), hidden = $('loc-size'), hint = $('loc-size-hint');
+  var fresh = $('loc-new-group'), freshInput = fresh.querySelector('input[name=newgroup]'), preview = $('loc-preview'), custom = $('loc-custom');
+  var lastGroup = null, choice = '';
+  function inGroup(g) { return rows.filter(function (r) { return r.code.indexOf(g + ' ') === 0; }); }
   function sizesIn(g) {
-    var found = {};
-    codes.forEach(function (c) { var m = c.indexOf(g + ' ') === 0 && c.slice(g.length + 1).match(/^([A-Z]+)\d+$/); if (m) found[m[1]] = 1; });
-    return Object.keys(found);
+    var found = {}, count = {}, ordered = [];
+    inGroup(g).forEach(function (r) {
+      var m = r.code.slice(g.length + 1).match(/^([A-Z]+)\d+$/);
+      if (m) { count[m[1]] = (count[m[1]] || 0) + 1; if (!found[m[1]]) found[m[1]] = r.kind; }
+    });
+    Object.keys(found).sort(function (a, b) { return count[b] - count[a] || (a < b ? -1 : 1); }).forEach(function (k) { ordered.push([k, k + ' · ' + found[k]]); });
+    return ordered;
+  }
+  function esc(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  function fill(g) {
+    var opts = sizesIn(g), plain = inGroup(g).some(function (r) { return /^\d+$/.test(r.code.slice(g.length + 1)); });
+    var none = ['', 'No size, just numbers'];
+    opts = plain || !opts.length ? [none].concat(opts) : opts;
+    opts.push(['__new', 'A new size…']);
+    choice = opts[0][0];
+    if (opts.length > 4) {
+      box.innerHTML = '<select id="loc-size-pick">' + opts.map(function (o) { return '<option value="' + o[0] + '">' + esc(o[1]) + '</option>'; }).join('') + '</select>';
+      box.firstChild.addEventListener('input', function () { choice = this.value; update(); });
+    } else {
+      box.innerHTML = opts.map(function (o, i) { return '<label class="check"><input type="radio" name="size_choice" value="' + o[0] + '"' + (i ? '' : ' checked') + '> ' + esc(o[1]) + '</label>'; }).join('');
+      box.querySelectorAll('input').forEach(function (r) { r.addEventListener('change', function () { choice = this.value; update(); }); });
+    }
   }
   function update() {
     var isNew = group.value === '';
     fresh.hidden = !isNew;
-    var g = isNew ? freshInput.value.trim().toUpperCase() : group.value, s = size.value.trim().toUpperCase();
-    list.innerHTML = sizesIn(g).map(function (x) { return '<option value="' + x + '">'; }).join('');
-    if (!g) { preview.textContent = 'type a group code'; return; }
+    var g = isNew ? freshInput.value.trim().toUpperCase() : group.value;
+    if (g !== lastGroup) { fill(g); lastGroup = g; }
+    var other = choice === '__new';
+    newSize.hidden = !other;
+    var s = (other ? text.value : choice).trim().toUpperCase();
+    hidden.value = s;
+    var count = inGroup(g).length;
+    hint.textContent = !g ? '' : count ? g + ' has ' + count + ' ' + (count === 1 ? 'location' : 'locations') + ', the size is the letter in the code, like S in ' + g + ' S01' : 'Plain numbers give ' + g + ' 01, ' + g + ' 02';
+    var own = custom.value.trim().toUpperCase();
+    if (own) { preview.textContent = own; return; }
+    if (!g) { preview.textContent = 'choose a group'; return; }
     var stem = g + ' ' + s, top = 0;
-    codes.forEach(function (c) { if (c.indexOf(stem) === 0 && /^\d+$/.test(c.slice(stem.length))) top = Math.max(top, parseInt(c.slice(stem.length), 10)); });
+    rows.forEach(function (r) { var c = r.code; if (c.indexOf(stem) === 0 && /^\d+$/.test(c.slice(stem.length))) top = Math.max(top, parseInt(c.slice(stem.length), 10)); });
     preview.textContent = stem + String(top + 1).padStart(2, '0');
   }
-  [group, size, freshInput].forEach(function (el) { el.addEventListener('input', update); });
+  [group, text, freshInput, custom].forEach(function (el) { el.addEventListener('input', update); });
   update();
 })();
 </script>
